@@ -334,7 +334,7 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 
 	bool found = false;
 	unsigned long i = 0;
-	long long loc = -1;
+	unsigned long loc = 0;
 
 	for (; i < sectorsize; i++)
 	{
@@ -350,6 +350,10 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 				loc = i;
 			}
 		}
+		if (i - loc > 256)
+		{
+			break;
+		}
 	}
 
 	// if following check is not enough to block the driver from loading unnecessarily,
@@ -358,7 +362,7 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 
 	bs->FreePool(blk);
 
-	if (!found || (loc == -1 && i > 256))
+	if (!found)
 	{
 		bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
 		bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
@@ -411,7 +415,7 @@ static EFI_STATUS EFIAPI drv_stop(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE 
 }
 
 extern "C"
-EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
+static EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
 {
 	EFI_STATUS Status;
 	EFI_GUID guid = EFI_DRIVER_BINDING_PROTOCOL_GUID;
