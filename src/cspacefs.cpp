@@ -3,6 +3,7 @@
 
 #define UNUSED(x) (void)(x)
 #define min(a, b) ((a) < (b) ? (a) : (b))
+#define max(a, b) ((a) < (b) ? (b) : (a))
 
 typedef struct
 {
@@ -22,6 +23,15 @@ typedef struct
 static EFI_SYSTEM_TABLE* systable;
 static EFI_BOOT_SERVICES* bs;
 static EFI_DRIVER_BINDING_PROTOCOL drvbind;
+
+unsigned long sectorsize = 512;
+unsigned long tablesize = 0;
+unsigned long long extratablesize = 0;
+char* table;
+unsigned long long filenamesend = 5;
+char* tablestr;
+unsigned long long tablestrlen = 0;
+unsigned long long filecount = 0;
 
 static CHAR16* HEX(unsigned long long i)
 {
@@ -102,38 +112,41 @@ static EFI_STATUS drv_supported(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE Co
 	return bs->OpenProtocol(ControllerHandle, &guid_block, 0, This->DriverBindingHandle, ControllerHandle, EFI_OPEN_PROTOCOL_TEST_PROTOCOL);
 }
 
-static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FILE_HANDLE** NewHandle, CHAR16* FileName,
-	UINT64 OpenMode, UINT64 Attributes) {
-	systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"file_open\r\n");
+static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FILE_HANDLE** NewHandle, CHAR16* FileName, UINT64 OpenMode, UINT64 Attributes)
+{
+	if (OpenMode & EFI_FILE_MODE_CREATE)
+	{
+		return EFI_UNSUPPORTED;
+	}
 
 	// FIXME
 
 	return EFI_UNSUPPORTED;
 }
 
-static EFI_STATUS EFIAPI file_close(struct _EFI_FILE_HANDLE* File) {
-	systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"file_close\r\n");
-
+static EFI_STATUS EFIAPI file_close(struct _EFI_FILE_HANDLE* File)
+{
 	// FIXME
 
 	return EFI_UNSUPPORTED;
 }
 
-static EFI_STATUS EFIAPI file_delete(struct _EFI_FILE_HANDLE* File) {
+static EFI_STATUS EFIAPI file_delete(struct _EFI_FILE_HANDLE* File)
+{
 	UNUSED(File);
 
 	return EFI_UNSUPPORTED;
 }
 
-static EFI_STATUS EFIAPI file_read(struct _EFI_FILE_HANDLE* File, UINTN* BufferSize, VOID* Buffer) {
-	systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"file_read\r\n");
-
+static EFI_STATUS EFIAPI file_read(struct _EFI_FILE_HANDLE* File, UINTN* BufferSize, VOID* Buffer)
+{
 	// FIXME
 
 	return EFI_UNSUPPORTED;
 }
 
-static EFI_STATUS EFIAPI file_write(struct _EFI_FILE_HANDLE* File, UINTN* BufferSize, VOID* Buffer) {
+static EFI_STATUS EFIAPI file_write(struct _EFI_FILE_HANDLE* File, UINTN* BufferSize, VOID* Buffer)
+{
 	UNUSED(File);
 	UNUSED(BufferSize);
 	UNUSED(Buffer);
@@ -141,31 +154,29 @@ static EFI_STATUS EFIAPI file_write(struct _EFI_FILE_HANDLE* File, UINTN* Buffer
 	return EFI_UNSUPPORTED;
 }
 
-static EFI_STATUS EFIAPI file_set_position(struct _EFI_FILE_HANDLE* File, UINT64 Position) {
-	systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"file_set_position\r\n");
-
+static EFI_STATUS EFIAPI file_set_position(struct _EFI_FILE_HANDLE* File, UINT64 Position)
+{
 	// FIXME
 
 	return EFI_UNSUPPORTED;
 }
 
-static EFI_STATUS EFIAPI file_get_position(struct _EFI_FILE_HANDLE* File, UINT64* Position) {
-	systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"file_get_position\r\n");
-
+static EFI_STATUS EFIAPI file_get_position(struct _EFI_FILE_HANDLE* File, UINT64* Position)
+{
 	// FIXME
 
 	return EFI_UNSUPPORTED;
 }
 
-static EFI_STATUS EFIAPI file_get_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* InformationType, UINTN* BufferSize, VOID* Buffer) {
-	systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"file_get_info\r\n");
-
+static EFI_STATUS EFIAPI file_get_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* InformationType, UINTN* BufferSize, VOID* Buffer)
+{
 	// FIXME
 
 	return EFI_UNSUPPORTED;
 }
 
-static EFI_STATUS EFIAPI file_set_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* InformationType, UINTN BufferSize, VOID* Buffer) {
+static EFI_STATUS EFIAPI file_set_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* InformationType, UINTN BufferSize, VOID* Buffer)
+{
 	UNUSED(File);
 	UNUSED(InformationType);
 	UNUSED(BufferSize);
@@ -174,7 +185,8 @@ static EFI_STATUS EFIAPI file_set_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* 
 	return EFI_UNSUPPORTED;
 }
 
-static EFI_STATUS file_flush(struct _EFI_FILE_HANDLE* File) {
+static EFI_STATUS file_flush(struct _EFI_FILE_HANDLE* File)
+{
 	UNUSED(File);
 
 	// nop
@@ -207,7 +219,7 @@ static EFI_STATUS EFIAPI open_volume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* This, EFI_
 
 	if (EFI_ERROR(Status))
 	{
-		do_print_error((CHAR16*)L"AllocatePool", Status);
+		do_print_error((CHAR16*)L"AllocatePool 0", Status);
 		return Status;
 	}
 
@@ -290,8 +302,8 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 
 	// Detect if CSpaceFS is present or not.
 
-	char table[512] = { 0 };
-	Status = block->ReadBlocks(block, block->Media->MediaId, 0, 512, table);
+	char form[512] = { 0 };
+	Status = block->ReadBlocks(block, block->Media->MediaId, 0, 512, form);
 
 	if (EFI_ERROR(Status))
 	{
@@ -300,70 +312,73 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 		return Status;
 	}
 
-	if (table[0] > 23)
+	if ((form[0] & 0xff) > 23)
 	{
 		bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
 		bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
 		return EFI_UNSUPPORTED;
 	}
 
-	unsigned long sectorsize = 2 << (9 + table[0]);
-	unsigned long tablesize = table[4] + (table[3] << 8) + (table[2] << 16) + (table[1] << 24);
-	unsigned long long extratablesize = static_cast<unsigned long long>(sectorsize) * tablesize;
+	sectorsize = 1 << (9 + (form[0] & 0xff));
+	tablesize = 1 + (form[4] & 0xff) + ((form[3] & 0xff) << 8) + ((form[2] & 0xff) << 16) + ((form[1] & 0xff) << 24);
+	extratablesize = static_cast<unsigned long long>(sectorsize) * tablesize;
 
-	char* blk = 0;
-	Status = bs->AllocatePool(EfiBootServicesData, sectorsize, (void**)&blk);
+	Status = bs->AllocatePool(EfiBootServicesData, extratablesize, (void**)&table);
 
 	if (EFI_ERROR(Status))
 	{
-		do_print_error((CHAR16*)L"AllocatePool", Status);
+		do_print_error((CHAR16*)L"AllocatePool 1", Status);
 		bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
 		bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
 		return Status;
 	}
 
-	Status = block->ReadBlocks(block, block->Media->MediaId, extratablesize, sectorsize, blk);
+	Status = block->ReadBlocks(block, block->Media->MediaId, 0, extratablesize, table);
 
 	if (EFI_ERROR(Status))
 	{
-		bs->FreePool(blk);
+		bs->FreePool(table);
 		bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
 		bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
 		return Status;
 	}
 
 	bool found = false;
-	unsigned long i = 0;
-	unsigned long loc = 0;
+	unsigned long long loc = 0;
+	unsigned long long tableend = 0;
 
-	for (; i < sectorsize; i++)
+	for (filenamesend = 5; filenamesend < extratablesize; filenamesend++)
 	{
-		if ((blk[i] & 0xff) == 255)
+		if ((table[filenamesend] & 0xff) == 255)
 		{
-			if ((blk[min(i + 1, sectorsize)] & 0xff) == 254)
+			if ((table[min(filenamesend + 1, extratablesize)] & 0xff) == 254)
 			{
 				found = true;
 				break;
 			}
 			else
 			{
-				loc = i;
+				if (loc == 0)
+				{
+					tableend = filenamesend;
+				}
+
+				// if following check is not enough to block the driver from loading unnecessarily,
+				// then we can add a check to make sure all bytes between loc and i equal a vaild path.
+				// if that is not enough, then nothing will be.
+
+				loc = filenamesend;
 			}
 		}
-		if (i - loc > 256)
+		if (filenamesend - loc > 256 && loc > 0)
 		{
 			break;
 		}
 	}
 
-	// if following check is not enough to block the driver from loading unnecessarily,
-	// then we can add a check to make sure all bytes between loc and i equal a vaild path.
-	// if that is not enough, then nothing will be.
-
-	bs->FreePool(blk);
-
 	if (!found)
 	{
+		bs->FreePool(table);
 		bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
 		bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
 		return EFI_UNSUPPORTED;
@@ -371,11 +386,55 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 
 	// if it is continue.
 
+	char* charmap = (char*)"0123456789-,.; ";
+	unsigned dmap[256] = { 0 };
+	unsigned p = 0;
+
+	for (unsigned i = 0; i < 15; i++)
+	{
+		for (unsigned o = 0; o < 15; o++)
+		{
+			dmap[p] = charmap[i] << 8 | charmap[o];
+			p++;
+		}
+	}
+
+	tablestrlen = tableend + tableend - 10;
+
+	Status = bs->AllocatePool(EfiBootServicesData, tablestrlen, (void**)&tablestr);
+
+	if (EFI_ERROR(Status))
+	{
+		do_print_error((CHAR16*)L"AllocatePool 2", Status);
+		bs->FreePool(table);
+		bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
+		bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
+		return Status;
+	}
+
+	for (unsigned long long i = 0; i < tableend - 5; i++)
+	{
+		tablestr[i + i] = (dmap[table[i + 5] & 0xff] >> 8) & 0xff;
+		tablestr[i + i + 1] = dmap[table[i + 5] & 0xff] & 0xff;
+	}
+
+	for (unsigned long long i = 0; i < tablestrlen; i++)
+	{
+		if (tablestr[i] == *".")
+		{
+			filecount++;
+		}
+	}
+
+	// init volume ^^^
+
 	Status = bs->AllocatePool(EfiBootServicesData, sizeof(volume), (void**)&vol);
 
 	if (EFI_ERROR(Status))
 	{
-		do_print_error((CHAR16*)L"AllocatePool", Status);
+		do_print_error((CHAR16*)L"AllocatePool 3", Status);
+		bs->FreePool(table);
+		bs->FreePool(tablestr);
 		bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
 		bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
 		return Status;
@@ -396,6 +455,8 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 		do_print_error((CHAR16*)L"InstallMultipleProtocolInterfaces", Status);
 		vol->volume::~volume();
 		bs->FreePool(vol);
+		bs->FreePool(table);
+		bs->FreePool(tablestr);
 		bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
 		bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
 		return Status;
