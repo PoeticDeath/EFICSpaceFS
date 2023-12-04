@@ -29,6 +29,7 @@ unsigned long tablesize = 0;
 unsigned long long extratablesize = 0;
 char* table;
 unsigned long long filenamesend = 5;
+unsigned long long tableend = 0;
 char* tablestr;
 unsigned long long tablestrlen = 0;
 unsigned long long filecount = 0;
@@ -110,6 +111,42 @@ static EFI_STATUS drv_supported(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE Co
 	bs->CloseProtocol(ControllerHandle, &guid_disk, This->DriverBindingHandle, ControllerHandle);
 
 	return bs->OpenProtocol(ControllerHandle, &guid_block, 0, This->DriverBindingHandle, ControllerHandle, EFI_OPEN_PROTOCOL_TEST_PROTOCOL);
+}
+
+static unsigned long long getfilenameindex(CHAR16* FileName)
+{
+	unsigned long long loc = 0;
+	unsigned FileNameLen = 0;
+
+	for (; FileName[FileNameLen] != 0; FileNameLen++);
+
+	for (unsigned long long i = 0; i < filecount; i++)
+	{
+		bool found = true;
+		unsigned j = 0;
+		for (; loc < filenamesend - tableend; loc++)
+		{
+			if ((table[tableend + loc] & 0xff) != (FileName[j] & 0xff))
+			{
+				found = false;
+			}
+			else
+			{
+				j++;
+			}
+			if ((table[tableend + loc + 1] & 0xff) == 255)
+			{
+				found = j == FileNameLen;
+				loc++;
+				break;
+			}
+		}
+		if (found)
+		{
+			return i;
+		}
+	}
+	return 0;
 }
 
 static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FILE_HANDLE** NewHandle, CHAR16* FileName, UINT64 OpenMode, UINT64 Attributes)
@@ -345,7 +382,6 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 
 	bool found = false;
 	unsigned long long loc = 0;
-	unsigned long long tableend = 0;
 
 	for (filenamesend = 5; filenamesend < extratablesize; filenamesend++)
 	{
