@@ -18,6 +18,9 @@ typedef struct
 {
 	EFI_FILE_PROTOCOL proto;
 	volume* vol;
+	unsigned long long index;
+	unsigned long long size;
+	unsigned long long pos;
 } inode;
 
 static EFI_SYSTEM_TABLE* systable;
@@ -33,6 +36,8 @@ unsigned long long tableend = 0;
 char* tablestr;
 unsigned long long tablestrlen = 0;
 unsigned long long filecount = 0;
+
+static void populate_file_handle(EFI_FILE_PROTOCOL* proto);
 
 static CHAR16* HEX(unsigned long long i)
 {
@@ -73,6 +78,48 @@ static CHAR16* HEX(unsigned long long i)
 	default:
 		return (CHAR16*)L"";
 	}
+}
+
+static unsigned toint(unsigned char c)
+{
+	switch (c)
+	{
+	case '0':
+		return 0;
+	case '1':
+		return 1;
+	case '2':
+		return 2;
+	case '3':
+		return 3;
+	case '4':
+		return 4;
+	case '5':
+		return 5;
+	case '6':
+		return 6;
+	case '7':
+		return 7;
+	case '8':
+		return 8;
+	case '9':
+		return 9;
+	default:
+		return 0;
+	}
+}
+
+static bool incmp(unsigned char a, unsigned char b)
+{
+	if (a >= 'A' && a <= 'Z')
+	{
+		a += 32;
+	}
+	if (b >= 'A' && b <= 'Z')
+	{
+		b += 32;
+	}
+	return a == b;
 }
 
 static void do_print_error(CHAR16* func, EFI_STATUS Status)
@@ -119,31 +166,45 @@ static unsigned long long getfilenameindex(CHAR16* FileName)
 	unsigned FileNameLen = 0;
 
 	for (; FileName[FileNameLen] != 0; FileNameLen++);
-
-	for (unsigned long long i = 0; i < filecount; i++)
+	if (FileNameLen == 0)
 	{
-		bool found = true;
-		unsigned j = 0;
-		for (; loc < filenamesend - tableend; loc++)
+		return 0;
+	}
+
+	unsigned j = 0;
+	bool found = false;
+	bool start = true;
+	for (unsigned long long i = 0; i < filecount + 1; i++)
+	{
+		for (; loc < filenamesend - tableend + 1; loc++)
 		{
-			if ((table[tableend + loc] & 0xff) != (FileName[j] & 0xff))
+			if (((table[tableend + loc] & 0xff) == 255) || ((table[tableend + loc] & 0xff) == 42)) // 255 = file, 42 = fuse symlink
 			{
-				found = false;
+				found = (j == FileNameLen);
+				j = 0;
+				if (found)
+				{
+					return i - 1;
+				}
+				start = true;
+				if ((table[tableend + loc] & 0xff) == 255)
+				{
+					loc++;
+					break;
+				}
 			}
-			else
+			if ((incmp((table[tableend + loc] & 0xff), (FileName[j] & 0xff)) || (((table[tableend + loc] & 0xff) == *"/") && ((FileName[j] & 0xff) == *"\\"))) && start) // case insensitive, / and \ are the same, make sure it is not just an end or middle of filename
 			{
 				j++;
 			}
-			if ((table[tableend + loc + 1] & 0xff) == 255)
+			else
 			{
-				found = j == FileNameLen;
-				loc++;
-				break;
+				if ((table[tableend + loc] & 0xff) != 42)
+				{
+					start = false;
+				}
+				j = 0;
 			}
-		}
-		if (found)
-		{
-			return i;
 		}
 	}
 	return 0;
@@ -156,16 +217,121 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 		return EFI_UNSUPPORTED;
 	}
 
-	// FIXME
+	inode* file;
+	EFI_STATUS Status;
 
-	return EFI_UNSUPPORTED;
+	Status = bs->AllocatePool(EfiBootServicesData, sizeof(inode), (void**)&file);
+	if (EFI_ERROR(Status))
+	{
+		do_print_error((CHAR16*)L"AllocatePool 0", Status);
+		return Status;
+	}
+
+	populate_file_handle(&file->proto);
+
+	file->index = getfilenameindex(FileName);
+	file->size = 0;
+	file->pos = 0;
+
+	unsigned long long loc = 0;
+	for (unsigned long long i = 0; i < tablestrlen; i++)
+	{
+		if (tablestr[i] == *".")
+		{
+			loc++;
+		}
+		if (loc == file->index - 1)
+		{
+			loc = i + 1;
+			break;
+		}
+	}
+
+	bool notzero = false;
+	unsigned cur = 0;
+	unsigned long long int0 = 0;
+	unsigned long long int1 = 0;
+	unsigned long long int2 = 0;
+
+	for (unsigned long long i = loc; i < tablestrlen; i++)
+	{
+		if (tablestr[i] == *"," || tablestr[i] == *".")
+		{
+			if (notzero)
+			{
+				switch (cur)
+				{
+				case 0:
+					file->size += sectorsize;
+					break;
+				case 1:
+					break;
+				case 2:
+					file->size += int2 - int1;
+					break;
+				}
+			}
+			cur = 0;
+			int0 = 0;
+			int1 = 0;
+			int2 = 0;
+			if (tablestr[i] == *".")
+			{
+				break;
+			}
+		}
+		else if (tablestr[i] == *";")
+		{
+			cur++;
+		}
+		else
+		{
+			notzero = true;
+			if (cur == 0)
+			{
+				int0 += toint(tablestr[i] & 0xff);
+				if (tablestr[i + 1] != *";" || tablestr[i + 1] != *"," || tablestr[i + 1] != *".")
+				{
+					int0 *= 10;
+				}
+			}
+			else if (cur == 1)
+			{
+				int1 += toint(tablestr[i] & 0xff);
+				if (tablestr[i + 1] != *";" || tablestr[i + 1] != *"," || tablestr[i + 1] != *".")
+				{
+					int1 *= 10;
+				}
+			}
+			else if (cur == 2)
+			{
+				int2 += toint(tablestr[i] & 0xff);
+				if (tablestr[i + 1] != *";" || tablestr[i + 1] != *"," || tablestr[i + 1] != *".")
+				{
+					int2 *= 10;
+				}
+			}
+		}
+	}
+
+	do_print_error((CHAR16*)L"file_open", file->index);//
+	do_print_error(FileName, file->size);//
+
+	*NewHandle = &file->proto;
+
+	return EFI_SUCCESS;
 }
 
 static EFI_STATUS EFIAPI file_close(struct _EFI_FILE_HANDLE* File)
 {
-	// FIXME
+	inode* file = _CR(File, inode, proto);
 
-	return EFI_UNSUPPORTED;
+	do_print_error((CHAR16*)L"file_close", file->index);//
+
+	file->inode::~inode();
+	bs->FreePool(file);
+
+	return EFI_SUCCESS;
 }
 
 static EFI_STATUS EFIAPI file_delete(struct _EFI_FILE_HANDLE* File)
@@ -177,7 +343,11 @@ static EFI_STATUS EFIAPI file_delete(struct _EFI_FILE_HANDLE* File)
 
 static EFI_STATUS EFIAPI file_read(struct _EFI_FILE_HANDLE* File, UINTN* BufferSize, VOID* Buffer)
 {
-	// FIXME
+	inode* file = _CR(File, inode, proto);
+	
+	do_print_error((CHAR16*)L"file_read", file->index);//
+
+	// FIXME - read from disk
 
 	return EFI_UNSUPPORTED;
 }
@@ -193,23 +363,43 @@ static EFI_STATUS EFIAPI file_write(struct _EFI_FILE_HANDLE* File, UINTN* Buffer
 
 static EFI_STATUS EFIAPI file_set_position(struct _EFI_FILE_HANDLE* File, UINT64 Position)
 {
-	// FIXME
+	do_print_error((CHAR16*)L"file_set_position", Position);//
 
-	return EFI_UNSUPPORTED;
+	inode* file = _CR(File, inode, proto);
+
+	if (Position == 0xFFFFFFFFFFFFFFFF)
+	{
+		file->pos = file->size;
+	}
+	else
+	{
+		file->pos = Position;
+	}
+
+	return EFI_SUCCESS;
 }
 
 static EFI_STATUS EFIAPI file_get_position(struct _EFI_FILE_HANDLE* File, UINT64* Position)
 {
-	// FIXME
+	inode* file = _CR(File, inode, proto);
 
-	return EFI_UNSUPPORTED;
+	*Position = file->pos;
+
+	do_print_error((CHAR16*)L"file_get_position", file->pos);//
+
+	return EFI_SUCCESS;
 }
 
 static EFI_STATUS EFIAPI file_get_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* InformationType, UINTN* BufferSize, VOID* Buffer)
 {
-	// FIXME
+	do_print_error((CHAR16*)L"file_get_info", 0);//
 
-	return EFI_UNSUPPORTED;
+	inode* file = _CR(File, inode, proto);
+	EFI_FILE_INFO* info = (EFI_FILE_INFO*)Buffer;
+
+	// FIXME - read from disk
+
+	return EFI_SUCCESS;
 }
 
 static EFI_STATUS EFIAPI file_set_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* InformationType, UINTN BufferSize, VOID* Buffer)
@@ -256,13 +446,14 @@ static EFI_STATUS EFIAPI open_volume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* This, EFI_
 
 	if (EFI_ERROR(Status))
 	{
-		do_print_error((CHAR16*)L"AllocatePool 0", Status);
+		do_print_error((CHAR16*)L"AllocatePool 1", Status);
 		return Status;
 	}
 
 	populate_file_handle(&ino->proto);
 
 	ino->vol = vol;
+	ino->index = getfilenameindex((CHAR16*)L"/");
 
 	*Root = &ino->proto;
 
@@ -364,7 +555,7 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 
 	if (EFI_ERROR(Status))
 	{
-		do_print_error((CHAR16*)L"AllocatePool 1", Status);
+		do_print_error((CHAR16*)L"AllocatePool 2", Status);
 		bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
 		bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
 		return Status;
@@ -441,7 +632,7 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 
 	if (EFI_ERROR(Status))
 	{
-		do_print_error((CHAR16*)L"AllocatePool 2", Status);
+		do_print_error((CHAR16*)L"AllocatePool 3", Status);
 		bs->FreePool(table);
 		bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
 		bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
@@ -468,7 +659,7 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 
 	if (EFI_ERROR(Status))
 	{
-		do_print_error((CHAR16*)L"AllocatePool 3", Status);
+		do_print_error((CHAR16*)L"AllocatePool 4", Status);
 		bs->FreePool(table);
 		bs->FreePool(tablestr);
 		bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
