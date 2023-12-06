@@ -33,6 +33,8 @@ struct inode
 
 	EFI_FILE_PROTOCOL proto;
 	volume& vol;
+	CHAR16* name = nullptr;
+	unsigned namelen = 0;
 	unsigned long long index = 0;
 	unsigned long long size = 0;
 	unsigned long long pos = 0;
@@ -245,7 +247,7 @@ volume::~volume()
 
 inode::~inode()
 {
-
+	bs->FreePool(name);
 }
 
 static EFI_STATUS drv_supported(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE ControllerHandle, EFI_DEVICE_PATH_PROTOCOL* RemainingDevicePath)
@@ -331,8 +333,20 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 	EFI_STATUS Status;
 	inode* ino = _CR(File, inode, proto);
 	inode* file;
+	CHAR16* filename;
+	unsigned FileNameLen = 0;
+	unsigned FileLen = 0;
 
-	Status = bs->AllocatePool(EfiBootServicesData, sizeof(inode), (void**)&file);
+	for (; FileName[FileNameLen] != 0;)
+	{
+		if (FileName[FileNameLen] == *"/" || FileName[FileNameLen] == *"\\")
+		{
+			FileLen = FileNameLen + 1;
+		}
+		FileNameLen++;
+	}
+
+	Status = bs->AllocatePool(EfiBootServicesData, (FileNameLen - FileLen + 1) * 2, (void**)&filename);
 
 	if (EFI_ERROR(Status))
 	{
@@ -340,10 +354,30 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 		return Status;
 	}
 
+	new (filename) CHAR16[(FileNameLen - FileLen + 1) * 2];
+
+	for (unsigned i = 0; i < FileNameLen - FileLen; i++)
+	{
+		filename[i] = FileName[FileLen + i];
+	}
+
+	filename[FileNameLen - FileLen] = 0;
+
+	Status = bs->AllocatePool(EfiBootServicesData, sizeof(inode), (void**)&file);
+
+	if (EFI_ERROR(Status))
+	{
+		bs->FreePool(filename);
+		do_print_error((CHAR16*)L"AllocatePool 1", Status);
+		return Status;
+	}
+
 	new (file) inode(ino->vol);
 
 	populate_file_handle(&file->proto);
 
+	file->name = filename;
+	file->namelen = FileNameLen - FileLen;
 	file->index = getfilenameindex(FileName, file->vol);
 	file->size = 0;
 	file->pos = 0;
@@ -536,7 +570,7 @@ static EFI_STATUS EFIAPI file_get_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* 
 	ATTRtoattr(winattrs);
 	info->Attribute = winattrs;
 
-	//info->FileName = ;
+	memcpy(info->FileName, file->name, file->namelen);
 
 	return EFI_SUCCESS;
 }
@@ -585,7 +619,7 @@ static EFI_STATUS EFIAPI open_volume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* This, EFI_
 
 	if (EFI_ERROR(Status))
 	{
-		do_print_error((CHAR16*)L"AllocatePool 1", Status);
+		do_print_error((CHAR16*)L"AllocatePool 2", Status);
 		return Status;
 	}
 
@@ -701,7 +735,7 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 
 	if (EFI_ERROR(Status))
 	{
-		do_print_error((CHAR16*)L"AllocatePool 2", Status);
+		do_print_error((CHAR16*)L"AllocatePool 3", Status);
 		bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
 		bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
 		return Status;
@@ -778,7 +812,7 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 
 	if (EFI_ERROR(Status))
 	{
-		do_print_error((CHAR16*)L"AllocatePool 3", Status);
+		do_print_error((CHAR16*)L"AllocatePool 4", Status);
 		bs->FreePool(table);
 		bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
 		bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
@@ -805,7 +839,7 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 
 	if (EFI_ERROR(Status))
 	{
-		do_print_error((CHAR16*)L"AllocatePool 4", Status);
+		do_print_error((CHAR16*)L"AllocatePool 5", Status);
 		bs->FreePool(table);
 		bs->FreePool(tablestr);
 		bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
