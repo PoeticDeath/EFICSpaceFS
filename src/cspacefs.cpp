@@ -133,15 +133,108 @@ static void do_print_error(CHAR16* func, EFI_STATUS Status)
 	systable->ConOut->OutputString(systable->ConOut, func);
 	systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L": ");
 	systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L"0x");
-	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0xF0000000) >> 28));
-	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0x0F000000) >> 24));
-	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0x00F00000) >> 20));
-	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0x000F0000) >> 16));
-	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0x0000F000) >> 12));
-	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0x00000F00) >> 8));
-	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0x000000F0) >> 4));
-	systable->ConOut->OutputString(systable->ConOut, HEX(Status & 0x0000000F));
+	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0xF000000000000000) >> 60));
+	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0x0F00000000000000) >> 56));
+	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0x00F0000000000000) >> 52));
+	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0x000F000000000000) >> 48));
+	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0x0000F00000000000) >> 44));
+	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0x00000F0000000000) >> 40));
+	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0x000000F000000000) >> 36));
+	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0x0000000F00000000) >> 32));
+	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0x00000000F0000000) >> 28));
+	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0x000000000F000000) >> 24));
+	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0x0000000000F00000) >> 20));
+	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0x00000000000F0000) >> 16));
+	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0x000000000000F000) >> 12));
+	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0x0000000000000F00) >> 8));
+	systable->ConOut->OutputString(systable->ConOut, HEX((Status & 0x00000000000000F0) >> 4));
+	systable->ConOut->OutputString(systable->ConOut, HEX(Status & 0x000000000000000F));
 	systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L".\r\n");
+}
+
+static void win_time_to_efi(int64_t win, EFI_TIME* efi)
+{
+	int64_t secs, time, days;
+
+	secs = win / 10000000;
+	time = secs % 86400;
+	days = secs / 86400;
+
+	unsigned int jd = 2305814 + days; // Julian date
+
+	unsigned int f = jd + 1401 + (((((4 * jd) + 274277) / 146097) * 3) / 4) - 38;
+	unsigned int e = (4 * f) + 3;
+	unsigned int g = (e % 1461) / 4;
+	unsigned int h = (5 * g) + 2;
+
+	efi->Month = (((h / 153) + 2) % 12) + 1;
+	efi->Year = (e / 1461) - 4716 + ((14 - efi->Month) / 12);
+	efi->Day = ((h % 153) / 5) + 1;
+	efi->Hour = time / 3600;
+	efi->Minute = (time % 3600) / 60;
+	efi->Second = time % 60;
+	efi->Pad1 = 0;
+	efi->Nanosecond = (win % 10000000) * 100;
+	efi->TimeZone = 0;
+	efi->Daylight = 0;
+	efi->Pad2 = 0;
+}
+
+static void ATTRtoattr(unsigned long& ATTR)
+{
+	unsigned long attr = 0;
+	if (ATTR & 32768) attr |= EFI_FILE_HIDDEN;
+	if (ATTR & 4096) attr |= EFI_FILE_READ_ONLY;
+	if (ATTR & 128) attr |= EFI_FILE_SYSTEM;
+	if (ATTR & 2048) attr |= EFI_FILE_ARCHIVE;
+	if (ATTR & 8192) attr |= EFI_FILE_DIRECTORY;
+	//if (ATTR & 1024) attr |= EFI_FILE_REPARSE_POINT;
+	ATTR = attr;
+}
+
+extern "C"
+void* memcpy(void* dest, const void* src, size_t n) {
+	void* orig_dest = dest;
+
+#if __INTPTR_WIDTH__ == 64
+	while (n >= sizeof(uint64_t)) {
+		*(uint64_t*)dest = *(uint64_t*)src;
+
+		dest = (uint8_t*)dest + sizeof(uint64_t);
+		src = (uint8_t*)src + sizeof(uint64_t);
+
+		n -= sizeof(uint64_t);
+	}
+#endif
+
+	while (n >= sizeof(uint32_t)) {
+		*(uint32_t*)dest = *(uint32_t*)src;
+
+		dest = (uint8_t*)dest + sizeof(uint32_t);
+		src = (uint8_t*)src + sizeof(uint32_t);
+
+		n -= sizeof(uint32_t);
+	}
+
+	while (n >= sizeof(uint16_t)) {
+		*(uint16_t*)dest = *(uint16_t*)src;
+
+		dest = (uint8_t*)dest + sizeof(uint16_t);
+		src = (uint8_t*)src + sizeof(uint16_t);
+
+		n -= sizeof(uint16_t);
+	}
+
+	while (n >= sizeof(uint8_t)) {
+		*(uint8_t*)dest = *(uint8_t*)src;
+
+		dest = (uint8_t*)dest + sizeof(uint8_t);
+		src = (uint8_t*)src + sizeof(uint8_t);
+
+		n -= sizeof(uint8_t);
+	}
+
+	return orig_dest;
 }
 
 volume::~volume()
@@ -336,9 +429,6 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 		}
 	}
 
-	do_print_error((CHAR16*)L"file_open", file->index);//
-	do_print_error(FileName, file->size);//
-
 	*NewHandle = &file->proto;
 
 	return EFI_SUCCESS;
@@ -347,8 +437,6 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 static EFI_STATUS EFIAPI file_close(struct _EFI_FILE_HANDLE* File)
 {
 	inode* file = _CR(File, inode, proto);
-
-	do_print_error((CHAR16*)L"file_close", file->index);//
 
 	file->inode::~inode();
 
@@ -384,8 +472,6 @@ static EFI_STATUS EFIAPI file_write(struct _EFI_FILE_HANDLE* File, UINTN* Buffer
 
 static EFI_STATUS EFIAPI file_set_position(struct _EFI_FILE_HANDLE* File, UINT64 Position)
 {
-	do_print_error((CHAR16*)L"file_set_position", Position);//
-
 	inode* file = _CR(File, inode, proto);
 
 	if (Position == 0xFFFFFFFFFFFFFFFF)
@@ -406,19 +492,51 @@ static EFI_STATUS EFIAPI file_get_position(struct _EFI_FILE_HANDLE* File, UINT64
 
 	*Position = file->pos;
 
-	do_print_error((CHAR16*)L"file_get_position", file->pos);//
-
 	return EFI_SUCCESS;
 }
 
 static EFI_STATUS EFIAPI file_get_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* InformationType, UINTN* BufferSize, VOID* Buffer)
 {
-	do_print_error((CHAR16*)L"file_get_info", 0);//
-
 	inode* file = _CR(File, inode, proto);
 	EFI_FILE_INFO* info = (EFI_FILE_INFO*)Buffer;
 
-	// FIXME - read from disk
+	info->Size = file->size;
+	info->FileSize = file->size;
+	info->PhysicalSize = (file->size + file->vol.sectorsize + 1) / file->vol.sectorsize * file->vol.sectorsize;
+
+	double time = 0;
+	char tim[8] = { 0 };
+	char ti[8] = { 0 };
+
+	memcpy(tim, file->vol.table + file->vol.filenamesend + 2 + file->index * 24, 8);
+	for (unsigned i = 0; i < 8; i++)
+	{
+		ti[i] = tim[7 - i];
+	}
+	memcpy(&time, ti, 8);
+	win_time_to_efi(time * 10000000 + 116444736000000000, &info->LastAccessTime);
+
+	memcpy(tim, file->vol.table + file->vol.filenamesend + 2 + file->index * 24 + 8, 8);
+	for (unsigned i = 0; i < 8; i++)
+	{
+		ti[i] = tim[7 - i];
+	}
+	memcpy(&time, ti, 8);
+	win_time_to_efi(time * 10000000 + 116444736000000000, &info->ModificationTime);
+
+	memcpy(tim, file->vol.table + file->vol.filenamesend + 2 + file->index * 24 + 16, 8);
+	for (unsigned i = 0; i < 8; i++)
+	{
+		ti[i] = tim[7 - i];
+	}
+	memcpy(&time, ti, 8);
+	win_time_to_efi(time * 10000000 + 116444736000000000, &info->CreateTime);
+
+	unsigned long winattrs = (file->vol.table[file->vol.filenamesend + 2 + file->vol.filecount * 24 + file->index * 11 + 7] & 0xff) << 24 | (file->vol.table[file->vol.filenamesend + 2 + file->vol.filecount * 24 + file->index * 11 + 8] & 0xff) << 16 | (file->vol.table[file->vol.filenamesend + 2 + file->vol.filecount * 24 + file->index * 11 + 9] & 0xff) << 8 | (file->vol.table[file->vol.filenamesend + 2 + file->vol.filecount * 24 + file->index * 11 + 10] & 0xff);
+	ATTRtoattr(winattrs);
+	info->Attribute = winattrs;
+
+	//info->FileName = ;
 
 	return EFI_SUCCESS;
 }
