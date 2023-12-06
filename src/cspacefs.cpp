@@ -1,3 +1,4 @@
+#include <new>
 #include <efi.h>
 #include "quibbleproto.h"
 
@@ -5,37 +6,41 @@
 #define min(a, b) ((a) < (b) ? (a) : (b))
 #define max(a, b) ((a) < (b) ? (b) : (a))
 
-typedef struct
+struct volume
 {
+	~volume();
+
 	EFI_SIMPLE_FILE_SYSTEM_PROTOCOL proto;
 	EFI_QUIBBLE_PROTOCOL quibble_proto;
 	EFI_HANDLE controller;
 	EFI_BLOCK_IO_PROTOCOL* block;
 	EFI_DISK_IO_PROTOCOL* disk_io;
-} volume;
+	unsigned long sectorsize;
+	unsigned long tablesize;
+	unsigned long long extratablesize;
+	char* table;
+	unsigned long long filenamesend;
+	unsigned long long tableend;
+	char* tablestr;
+	unsigned long long tablestrlen;
+	unsigned long long filecount;
+};
 
-typedef struct
+struct inode
 {
+	inode(volume& vol) : vol(vol) { }
+	~inode();
+
 	EFI_FILE_PROTOCOL proto;
-	volume* vol;
-	unsigned long long index;
-	unsigned long long size;
-	unsigned long long pos;
-} inode;
+	volume& vol;
+	unsigned long long index = 0;
+	unsigned long long size = 0;
+	unsigned long long pos = 0;
+};
 
 static EFI_SYSTEM_TABLE* systable;
 static EFI_BOOT_SERVICES* bs;
 static EFI_DRIVER_BINDING_PROTOCOL drvbind;
-
-unsigned long sectorsize = 512;
-unsigned long tablesize = 0;
-unsigned long long extratablesize = 0;
-char* table;
-unsigned long long filenamesend = 5;
-unsigned long long tableend = 0;
-char* tablestr;
-unsigned long long tablestrlen = 0;
-unsigned long long filecount = 0;
 
 static void populate_file_handle(EFI_FILE_PROTOCOL* proto);
 
@@ -139,6 +144,17 @@ static void do_print_error(CHAR16* func, EFI_STATUS Status)
 	systable->ConOut->OutputString(systable->ConOut, (CHAR16*)L".\r\n");
 }
 
+volume::~volume()
+{
+	bs->FreePool(table);
+	bs->FreePool(tablestr);
+}
+
+inode::~inode()
+{
+
+}
+
 static EFI_STATUS drv_supported(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE ControllerHandle, EFI_DEVICE_PATH_PROTOCOL* RemainingDevicePath)
 {
 	EFI_STATUS Status;
@@ -160,7 +176,7 @@ static EFI_STATUS drv_supported(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE Co
 	return bs->OpenProtocol(ControllerHandle, &guid_block, 0, This->DriverBindingHandle, ControllerHandle, EFI_OPEN_PROTOCOL_TEST_PROTOCOL);
 }
 
-static unsigned long long getfilenameindex(CHAR16* FileName)
+static unsigned long long getfilenameindex(CHAR16* FileName, volume& vol)
 {
 	unsigned long long loc = 0;
 	unsigned FileNameLen = 0;
@@ -174,11 +190,11 @@ static unsigned long long getfilenameindex(CHAR16* FileName)
 	unsigned j = 0;
 	bool found = false;
 	bool start = true;
-	for (unsigned long long i = 0; i < filecount + 1; i++)
+	for (unsigned long long i = 0; i < vol.filecount + 1; i++)
 	{
-		for (; loc < filenamesend - tableend + 1; loc++)
+		for (; loc < vol.filenamesend - vol.tableend + 1; loc++)
 		{
-			if (((table[tableend + loc] & 0xff) == 255) || ((table[tableend + loc] & 0xff) == 42)) // 255 = file, 42 = fuse symlink
+			if (((vol.table[vol.tableend + loc] & 0xff) == 255) || ((vol.table[vol.tableend + loc] & 0xff) == 42)) // 255 = file, 42 = fuse symlink
 			{
 				found = (j == FileNameLen);
 				j = 0;
@@ -187,19 +203,19 @@ static unsigned long long getfilenameindex(CHAR16* FileName)
 					return i - 1;
 				}
 				start = true;
-				if ((table[tableend + loc] & 0xff) == 255)
+				if ((vol.table[vol.tableend + loc] & 0xff) == 255)
 				{
 					loc++;
 					break;
 				}
 			}
-			if ((incmp((table[tableend + loc] & 0xff), (FileName[j] & 0xff)) || (((table[tableend + loc] & 0xff) == *"/") && ((FileName[j] & 0xff) == *"\\"))) && start) // case insensitive, / and \ are the same, make sure it is not just an end or middle of filename
+			if ((incmp((vol.table[vol.tableend + loc] & 0xff), (FileName[j] & 0xff)) || (((vol.table[vol.tableend + loc] & 0xff) == *"/") && ((FileName[j] & 0xff) == *"\\"))) && start) // case insensitive, / and \ are the same, make sure it is not just an end or middle of filename
 			{
 				j++;
 			}
 			else
 			{
-				if ((table[tableend + loc] & 0xff) != 42)
+				if ((vol.table[vol.tableend + loc] & 0xff) != 42)
 				{
 					start = false;
 				}
@@ -212,31 +228,37 @@ static unsigned long long getfilenameindex(CHAR16* FileName)
 
 static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FILE_HANDLE** NewHandle, CHAR16* FileName, UINT64 OpenMode, UINT64 Attributes)
 {
+	UNUSED(Attributes);
+
 	if (OpenMode & EFI_FILE_MODE_CREATE)
 	{
 		return EFI_UNSUPPORTED;
 	}
 
-	inode* file;
 	EFI_STATUS Status;
+	inode* ino = _CR(File, inode, proto);
+	inode* file;
 
 	Status = bs->AllocatePool(EfiBootServicesData, sizeof(inode), (void**)&file);
+
 	if (EFI_ERROR(Status))
 	{
 		do_print_error((CHAR16*)L"AllocatePool 0", Status);
 		return Status;
 	}
 
+	new (file) inode(ino->vol);
+
 	populate_file_handle(&file->proto);
 
-	file->index = getfilenameindex(FileName);
+	file->index = getfilenameindex(FileName, file->vol);
 	file->size = 0;
 	file->pos = 0;
 
 	unsigned long long loc = 0;
-	for (unsigned long long i = 0; i < tablestrlen; i++)
+	for (unsigned long long i = 0; i < file->vol.tablestrlen; i++)
 	{
-		if (tablestr[i] == *".")
+		if (file->vol.tablestr[i] == *".")
 		{
 			loc++;
 		}
@@ -253,16 +275,16 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 	unsigned long long int1 = 0;
 	unsigned long long int2 = 0;
 
-	for (unsigned long long i = loc; i < tablestrlen; i++)
+	for (unsigned long long i = loc; i < file->vol.tablestrlen; i++)
 	{
-		if (tablestr[i] == *"," || tablestr[i] == *".")
+		if (file->vol.tablestr[i] == *"," || file->vol.tablestr[i] == *".")
 		{
 			if (notzero)
 			{
 				switch (cur)
 				{
 				case 0:
-					file->size += sectorsize;
+					file->size += file->vol.sectorsize;
 					break;
 				case 1:
 					break;
@@ -275,12 +297,12 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 			int0 = 0;
 			int1 = 0;
 			int2 = 0;
-			if (tablestr[i] == *".")
+			if (file->vol.tablestr[i] == *".")
 			{
 				break;
 			}
 		}
-		else if (tablestr[i] == *";")
+		else if (file->vol.tablestr[i] == *";")
 		{
 			cur++;
 		}
@@ -289,24 +311,24 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 			notzero = true;
 			if (cur == 0)
 			{
-				int0 += toint(tablestr[i] & 0xff);
-				if (tablestr[i + 1] != *";" || tablestr[i + 1] != *"," || tablestr[i + 1] != *".")
+				int0 += toint(file->vol.tablestr[i] & 0xff);
+				if (file->vol.tablestr[i + 1] != *";" || file->vol.tablestr[i + 1] != *"," || file->vol.tablestr[i + 1] != *".")
 				{
 					int0 *= 10;
 				}
 			}
 			else if (cur == 1)
 			{
-				int1 += toint(tablestr[i] & 0xff);
-				if (tablestr[i + 1] != *";" || tablestr[i + 1] != *"," || tablestr[i + 1] != *".")
+				int1 += toint(file->vol.tablestr[i] & 0xff);
+				if (file->vol.tablestr[i + 1] != *";" || file->vol.tablestr[i + 1] != *"," || file->vol.tablestr[i + 1] != *".")
 				{
 					int1 *= 10;
 				}
 			}
 			else if (cur == 2)
 			{
-				int2 += toint(tablestr[i] & 0xff);
-				if (tablestr[i + 1] != *";" || tablestr[i + 1] != *"," || tablestr[i + 1] != *".")
+				int2 += toint(file->vol.tablestr[i] & 0xff);
+				if (file->vol.tablestr[i + 1] != *";" || file->vol.tablestr[i + 1] != *"," || file->vol.tablestr[i + 1] != *".")
 				{
 					int2 *= 10;
 				}
@@ -329,7 +351,6 @@ static EFI_STATUS EFIAPI file_close(struct _EFI_FILE_HANDLE* File)
 	do_print_error((CHAR16*)L"file_close", file->index);//
 
 	file->inode::~inode();
-	bs->FreePool(file);
 
 	return EFI_SUCCESS;
 }
@@ -450,10 +471,11 @@ static EFI_STATUS EFIAPI open_volume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* This, EFI_
 		return Status;
 	}
 
+	new (ino) inode(*vol);
+
 	populate_file_handle(&ino->proto);
 
-	ino->vol = vol;
-	ino->index = getfilenameindex((CHAR16*)L"/");
+	ino->index = getfilenameindex((CHAR16*)L"/", ino->vol);
 
 	*Root = &ino->proto;
 
@@ -475,15 +497,15 @@ static EFI_STATUS get_driver_name(EFI_QUIBBLE_PROTOCOL* This, CHAR16* DriverName
 
 	UNUSED(This);
 
-	if (*DriverNameLen < sizeof(name))
+	if (*DriverNameLen < sizeof(name) / 2)
 	{
-		*DriverNameLen = sizeof(name);
+		*DriverNameLen = sizeof(name) / 2;
 		return EFI_BUFFER_TOO_SMALL;
 	}
 
-	*DriverNameLen = sizeof(name);
+	*DriverNameLen = sizeof(name) / 2;
 
-	for (unsigned long long i = 0; i < sizeof(name); i++)
+	for (unsigned long long i = 0; i < sizeof(name) / 2; i++)
 	{
 		DriverName[i] = name[i];
 	}
@@ -547,9 +569,15 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 		return EFI_UNSUPPORTED;
 	}
 
-	sectorsize = 1 << (9 + (form[0] & 0xff));
-	tablesize = 1 + (form[4] & 0xff) + ((form[3] & 0xff) << 8) + ((form[2] & 0xff) << 16) + ((form[1] & 0xff) << 24);
-	extratablesize = static_cast<unsigned long long>(sectorsize) * tablesize;
+	unsigned long sectorsize = 1 << (9 + (form[0] & 0xff));
+	unsigned long tablesize = 1 + (form[4] & 0xff) + ((form[3] & 0xff) << 8) + ((form[2] & 0xff) << 16) + ((form[1] & 0xff) << 24);
+	unsigned long long extratablesize = static_cast<unsigned long long>(sectorsize) * tablesize;
+	char* table = nullptr;
+	unsigned long long filenamesend = 5;
+	unsigned long long tableend = 0;
+	char* tablestr = nullptr;
+	unsigned long long tablestrlen = 0;
+	unsigned long long filecount = 0;
 
 	Status = bs->AllocatePool(EfiBootServicesData, extratablesize, (void**)&table);
 
@@ -674,6 +702,16 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 	vol->disk_io = disk_io;
 	vol->quibble_proto.GetArcName = get_arc_name;
 	vol->quibble_proto.GetWindowsDriverName = get_driver_name;
+
+	vol->sectorsize = sectorsize;
+	vol->tablesize = tablesize;
+	vol->extratablesize = extratablesize;
+	vol->table = table;
+	vol->filenamesend = filenamesend;
+	vol->tableend = tableend;
+	vol->tablestr = tablestr;
+	vol->tablestrlen = tablestrlen;
+	vol->filecount = filecount;
 
 	Status = bs->InstallMultipleProtocolInterfaces(&ControllerHandle, &fs_guid, &vol->proto, &quibble_guid, &vol->quibble_proto, nullptr);
 
