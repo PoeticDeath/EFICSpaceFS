@@ -258,14 +258,14 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 	unsigned long long loc = 0;
 	for (unsigned long long i = 0; i < file->vol.tablestrlen; i++)
 	{
+		if (loc == file->index)
+		{
+			loc = i;
+			break;
+		}
 		if (file->vol.tablestr[i] == *".")
 		{
 			loc++;
-		}
-		if (loc == file->index - 1)
-		{
-			loc = i + 1;
-			break;
 		}
 	}
 
@@ -312,7 +312,7 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 			if (cur == 0)
 			{
 				int0 += toint(file->vol.tablestr[i] & 0xff);
-				if (file->vol.tablestr[i + 1] != *";" || file->vol.tablestr[i + 1] != *"," || file->vol.tablestr[i + 1] != *".")
+				if (file->vol.tablestr[i + 1] != *";" && file->vol.tablestr[i + 1] != *"," && file->vol.tablestr[i + 1] != *".")
 				{
 					int0 *= 10;
 				}
@@ -320,7 +320,7 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 			else if (cur == 1)
 			{
 				int1 += toint(file->vol.tablestr[i] & 0xff);
-				if (file->vol.tablestr[i + 1] != *";" || file->vol.tablestr[i + 1] != *"," || file->vol.tablestr[i + 1] != *".")
+				if (file->vol.tablestr[i + 1] != *";" && file->vol.tablestr[i + 1] != *"," && file->vol.tablestr[i + 1] != *".")
 				{
 					int1 *= 10;
 				}
@@ -328,7 +328,7 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 			else if (cur == 2)
 			{
 				int2 += toint(file->vol.tablestr[i] & 0xff);
-				if (file->vol.tablestr[i + 1] != *";" || file->vol.tablestr[i + 1] != *"," || file->vol.tablestr[i + 1] != *".")
+				if (file->vol.tablestr[i + 1] != *";" && file->vol.tablestr[i + 1] != *"," && file->vol.tablestr[i + 1] != *".")
 				{
 					int2 *= 10;
 				}
