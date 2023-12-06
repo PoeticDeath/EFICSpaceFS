@@ -195,6 +195,99 @@ static void ATTRtoattr(unsigned long& ATTR)
 }
 
 extern "C"
+void* memset(void* s, int c, size_t n) {
+	void* orig_s = s;
+
+	// FIXME - faster if we make sure we're aligned (also in memcpy)?
+
+#if __INTPTR_WIDTH__ == 64
+	uint64_t v;
+
+	v = 0;
+
+	for (unsigned int i = 0; i < sizeof(uint64_t); i++) {
+		v <<= 8;
+		v |= c & 0xff;
+	}
+
+	while (n >= sizeof(uint64_t)) {
+		*(uint64_t*)s = v;
+
+		s = (uint8_t*)s + sizeof(uint64_t);
+		n -= sizeof(uint64_t);
+	}
+#else
+	uint32_t v;
+
+	v = 0;
+
+	for (unsigned int i = 0; i < sizeof(uint32_t); i++) {
+		v <<= 8;
+		v |= c & 0xff;
+	}
+
+	while (n >= sizeof(uint32_t)) {
+		*(uint32_t*)s = v;
+
+		s = (uint8_t*)s + sizeof(uint32_t);
+		n -= sizeof(uint32_t);
+	}
+#endif
+
+	while (n > 0) {
+		*(uint8_t*)s = c;
+
+		s = (uint8_t*)s + 1;
+		n--;
+	}
+
+	return orig_s;
+}
+
+extern "C"
+int memcmp(const void* s1, const void* s2, size_t n) {
+#if __INTPTR_WIDTH__ == 64
+	while (n > sizeof(uint64_t)) {
+		uint64_t c1 = *(uint64_t*)s1;
+		uint64_t c2 = *(uint64_t*)s2;
+
+		if (c1 != c2)
+			return c1 > c2 ? 1 : -1;
+
+		s1 = (uint64_t*)s1 + 1;
+		s2 = (uint64_t*)s2 + 1;
+		n -= sizeof(uint64_t);
+	}
+#endif
+
+	while (n > sizeof(uint32_t)) {
+		uint32_t c1 = *(uint32_t*)s1;
+		uint32_t c2 = *(uint32_t*)s2;
+
+		if (c1 != c2)
+			return c1 > c2 ? 1 : -1;
+
+		s1 = (uint32_t*)s1 + 1;
+		s2 = (uint32_t*)s2 + 1;
+		n -= sizeof(uint32_t);
+	}
+
+	while (n > 0) {
+		uint8_t c1 = *(uint8_t*)s1;
+		uint8_t c2 = *(uint8_t*)s2;
+
+		if (c1 != c2)
+			return c1 > c2 ? 1 : -1;
+
+		s1 = (uint8_t*)s1 + 1;
+		s2 = (uint8_t*)s2 + 1;
+		n--;
+	}
+
+	return 0;
+}
+
+extern "C"
 void* memcpy(void* dest, const void* src, size_t n) {
 	void* orig_dest = dest;
 
@@ -253,7 +346,7 @@ inode::~inode()
 static EFI_STATUS drv_supported(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE ControllerHandle, EFI_DEVICE_PATH_PROTOCOL* RemainingDevicePath)
 {
 	EFI_STATUS Status;
-	EFI_DISK_IO_PROTOCOL* disk_io;
+	EFI_DISK_IO_PROTOCOL* disk_io = nullptr;
 	EFI_GUID guid_disk = EFI_DISK_IO_PROTOCOL_GUID;
 	EFI_GUID guid_block = EFI_BLOCK_IO_PROTOCOL_GUID;
 
@@ -332,10 +425,10 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 
 	EFI_STATUS Status;
 	inode* ino = _CR(File, inode, proto);
-	inode* file;
-	CHAR16* filename;
-	unsigned FileNameLen = 0;
-	unsigned FileLen = 0;
+	inode* file = nullptr;
+	CHAR16* filename = nullptr;
+	UINTN FileNameLen = 0;
+	UINTN FileLen = 0;
 
 	for (; FileName[FileNameLen] != 0;)
 	{
@@ -371,6 +464,8 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 		do_print_error((CHAR16*)L"AllocatePool 1", Status);
 		return Status;
 	}
+
+	memset(file, 0, sizeof(inode));
 
 	new (file) inode(ino->vol);
 
@@ -533,6 +628,24 @@ static EFI_STATUS EFIAPI file_get_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* 
 {
 	inode* file = _CR(File, inode, proto);
 	EFI_FILE_INFO* info = (EFI_FILE_INFO*)Buffer;
+	EFI_GUID guid = EFI_FILE_INFO_ID;
+
+	// FIXME - EFI_FILE_SYSTEM_INFO
+
+	if (memcmp(InformationType, &guid, sizeof(EFI_GUID)))
+	{
+		return EFI_UNSUPPORTED;
+	}
+
+	unsigned int size = offsetof(EFI_FILE_INFO, FileName[0]) + sizeof(CHAR16);
+
+	size += file->namelen * sizeof(CHAR16);
+
+	if (*BufferSize < size)
+	{
+		*BufferSize = size;
+		return EFI_BUFFER_TOO_SMALL;
+	}
 
 	info->Size = file->size;
 	info->FileSize = file->size;
@@ -613,7 +726,7 @@ static EFI_STATUS EFIAPI open_volume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* This, EFI_
 {
 	EFI_STATUS Status;
 	volume* vol = _CR(This, volume, proto);
-	inode* ino;
+	inode* ino = nullptr;
 
 	Status = bs->AllocatePool(EfiBootServicesData, sizeof(inode), (void**)&ino);
 
@@ -622,6 +735,8 @@ static EFI_STATUS EFIAPI open_volume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* This, EFI_
 		do_print_error((CHAR16*)L"AllocatePool 2", Status);
 		return Status;
 	}
+
+	memset(ino, 0, sizeof(inode));
 
 	new (ino) inode(*vol);
 
@@ -649,18 +764,15 @@ static EFI_STATUS get_driver_name(EFI_QUIBBLE_PROTOCOL* This, CHAR16* DriverName
 
 	UNUSED(This);
 
-	if (*DriverNameLen < sizeof(name) / 2)
+	if (*DriverNameLen < sizeof(name))
 	{
-		*DriverNameLen = sizeof(name) / 2;
+		*DriverNameLen = sizeof(name);
 		return EFI_BUFFER_TOO_SMALL;
 	}
 
-	*DriverNameLen = sizeof(name) / 2;
+	*DriverNameLen = sizeof(name);
 
-	for (unsigned long long i = 0; i < sizeof(name) / 2; i++)
-	{
-		DriverName[i] = name[i];
-	}
+	memcpy(DriverName, name, sizeof(name));
 
 	return EFI_SUCCESS;
 }
@@ -674,9 +786,9 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 	EFI_GUID block_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
 	EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
 	EFI_GUID quibble_guid = EFI_QUIBBLE_PROTOCOL_GUID;
-	EFI_BLOCK_IO_PROTOCOL* block;
-	EFI_DISK_IO_PROTOCOL* disk_io;
-	volume* vol;
+	EFI_BLOCK_IO_PROTOCOL* block = nullptr;
+	EFI_DISK_IO_PROTOCOL* disk_io = nullptr;
+	volume* vol = nullptr;
 
 	Status = bs->OpenProtocol(ControllerHandle, &block_guid, (void**)&block, This->DriverBindingHandle, ControllerHandle, EFI_OPEN_PROTOCOL_GET_PROTOCOL);
 
@@ -846,6 +958,8 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 		bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
 		return Status;
 	}
+
+	memset(vol, 0, sizeof(volume));
 
 	vol->proto.Revision = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_REVISION;
 	vol->proto.OpenVolume = open_volume;
