@@ -441,6 +441,11 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 		FileNameLen++;
 	}
 
+	if (FileName[0] == *"." && FileName[1] == *".")
+	{
+		return EFI_INVALID_PARAMETER;
+	}
+
 	Status = bs->AllocatePool(EfiBootServicesData, (FileNameLen - FileLen + 1) * 2, (void**)&filename);
 
 	if (EFI_ERROR(Status))
@@ -585,7 +590,7 @@ static EFI_STATUS EFIAPI file_delete(struct _EFI_FILE_HANDLE* File)
 
 static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 {
-	do_print_error((CHAR16*)L"read_dir", *BufferSize);
+	do_print_error((CHAR16*)L"read_dir", *BufferSize);//
 
 	return EFI_UNSUPPORTED;
 }
@@ -747,13 +752,27 @@ static EFI_STATUS EFIAPI file_set_position(struct _EFI_FILE_HANDLE* File, UINT64
 {
 	inode* file = _CR(File, inode, proto);
 
-	if (Position == 0xFFFFFFFFFFFFFFFF)
+	if (file->is_dir)
 	{
-		file->pos = file->size;
+		if (Position != 0)
+		{
+			return EFI_UNSUPPORTED;
+		}
+		else
+		{
+			file->pos = 0;
+		}
 	}
 	else
 	{
-		file->pos = Position;
+		if (Position == 0xFFFFFFFFFFFFFFFF)
+		{
+			file->pos = file->size;
+		}
+		else
+		{
+			file->pos = Position;
+		}
 	}
 
 	return EFI_SUCCESS;
@@ -762,6 +781,11 @@ static EFI_STATUS EFIAPI file_set_position(struct _EFI_FILE_HANDLE* File, UINT64
 static EFI_STATUS EFIAPI file_get_position(struct _EFI_FILE_HANDLE* File, UINT64* Position)
 {
 	inode* file = _CR(File, inode, proto);
+
+	if (file->is_dir)
+	{
+		return EFI_UNSUPPORTED;
+	}
 
 	*Position = file->pos;
 
