@@ -15,15 +15,17 @@ struct volume
 	EFI_HANDLE controller;
 	EFI_BLOCK_IO_PROTOCOL* block;
 	EFI_DISK_IO_PROTOCOL* disk_io;
-	unsigned long sectorsize;
-	unsigned long tablesize;
-	unsigned long long extratablesize;
-	char* table;
-	unsigned long long filenamesend;
-	unsigned long long tableend;
-	char* tablestr;
-	unsigned long long tablestrlen;
-	unsigned long long filecount;
+	unsigned long sectorsize = 512;
+	unsigned long tablesize = 1;
+	unsigned long long extratablesize = 512;
+	char* table = nullptr;
+	unsigned long long filenamesend = 5;
+	unsigned long long tableend = 0;
+	char* tablestr = nullptr;
+	unsigned long long tablestrlen = 0;
+	unsigned long long filecount = 0;
+	CHAR16 olddir[256] = { 0 };
+	unsigned olddirlen = 0;
 };
 
 struct inode
@@ -435,8 +437,11 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 
 	if ((FileName[FileNameLen - 1] == *"/" || FileName[FileNameLen - 1] == *"\\") && FileName[1] != 0)
 	{
+		ino->vol.olddirlen = 0;
 		FileNameLen--;
 	}
+
+	FileNameLen += ino->vol.olddirlen;
 
 	if (FileName[0] == *"." && FileName[1] == *".")
 	{
@@ -453,9 +458,11 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 
 	new (filename) CHAR16[(FileNameLen + 1) * 2];
 
+	memcpy(filename, ino->vol.olddir, ino->vol.olddirlen * sizeof(CHAR16));
+
 	for (unsigned i = 0; i < FileNameLen; i++)
 	{
-		filename[i] = FileName[i];
+		filename[i + ino->vol.olddirlen] = FileName[i];
 	}
 
 	filename[FileNameLen] = 0;
@@ -480,6 +487,14 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 	file->index = getfilenameindex(filename, file->vol);
 	file->size = 0;
 	file->pos = 0;
+
+	if (!file->index)
+	{
+		file->fullnamelen = FileNameLen - ino->vol.olddirlen;
+		memcpy(filename, FileName, (file->fullnamelen) * sizeof(CHAR16));
+		filename[file->fullnamelen] = 0;
+		file->index = getfilenameindex(filename, file->vol);
+	}
 
 	unsigned long long loc = 0;
 	for (unsigned long long i = 0; i < file->vol.tablestrlen; i++)
@@ -643,6 +658,8 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 			break;
 		case 254:
 			*BufferSize = 0;
+			memcpy(file.vol.olddir, file.name, file.fullnamelen * sizeof(CHAR16));
+			file.vol.olddirlen = file.fullnamelen;
 			return EFI_SUCCESS;
 		case 92:
 			filename[filenamelen] = file.vol.table[i];
