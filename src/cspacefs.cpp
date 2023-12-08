@@ -35,7 +35,7 @@ struct inode
 	volume& vol;
 	bool is_dir = false;
 	CHAR16* name = nullptr;
-	unsigned namelen = 0;
+	unsigned fullnamelen = 0;
 	unsigned long long tableloc = 0;
 	unsigned long long index = 0;
 	unsigned long long size = 0;
@@ -430,15 +430,12 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 	inode* file = nullptr;
 	CHAR16* filename = nullptr;
 	UINTN FileNameLen = 0;
-	UINTN FileLen = 0;
 
-	for (; FileName[FileNameLen] != 0;)
+	for (; FileName[FileNameLen] != 0; FileNameLen++);
+
+	if ((FileName[FileNameLen - 1] == *"/" || FileName[FileNameLen - 1] == *"\\") && FileName[1] != 0)
 	{
-		if (FileName[FileNameLen] == *"/" || FileName[FileNameLen] == *"\\")
-		{
-			FileLen = FileNameLen + 1;
-		}
-		FileNameLen++;
+		FileNameLen--;
 	}
 
 	if (FileName[0] == *"." && FileName[1] == *".")
@@ -446,7 +443,7 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 		return EFI_INVALID_PARAMETER;
 	}
 
-	Status = bs->AllocatePool(EfiBootServicesData, (FileNameLen - FileLen + 1) * 2, (void**)&filename);
+	Status = bs->AllocatePool(EfiBootServicesData, (FileNameLen + 1) * 2, (void**)&filename);
 
 	if (EFI_ERROR(Status))
 	{
@@ -454,14 +451,14 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 		return Status;
 	}
 
-	new (filename) CHAR16[(FileNameLen - FileLen + 1) * 2];
+	new (filename) CHAR16[(FileNameLen + 1) * 2];
 
-	for (unsigned i = 0; i < FileNameLen - FileLen; i++)
+	for (unsigned i = 0; i < FileNameLen; i++)
 	{
-		filename[i] = FileName[FileLen + i];
+		filename[i] = FileName[i];
 	}
 
-	filename[FileNameLen - FileLen] = 0;
+	filename[FileNameLen] = 0;
 
 	Status = bs->AllocatePool(EfiBootServicesData, sizeof(inode), (void**)&file);
 
@@ -479,8 +476,8 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 	populate_file_handle(&file->proto);
 
 	file->name = filename;
-	file->namelen = FileNameLen - FileLen;
-	file->index = getfilenameindex(FileName, file->vol);
+	file->fullnamelen = FileNameLen;
+	file->index = getfilenameindex(filename, file->vol);
 	file->size = 0;
 	file->pos = 0;
 
@@ -540,29 +537,29 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 		else
 		{
 			notzero = true;
-			if (cur == 0)
+			switch (cur)
 			{
+			case 0:
 				int0 += toint(file->vol.tablestr[i] & 0xff);
 				if (file->vol.tablestr[i + 1] != *";" && file->vol.tablestr[i + 1] != *"," && file->vol.tablestr[i + 1] != *".")
 				{
 					int0 *= 10;
 				}
-			}
-			else if (cur == 1)
-			{
+				break;
+			case 1:
 				int1 += toint(file->vol.tablestr[i] & 0xff);
 				if (file->vol.tablestr[i + 1] != *";" && file->vol.tablestr[i + 1] != *"," && file->vol.tablestr[i + 1] != *".")
 				{
 					int1 *= 10;
 				}
-			}
-			else if (cur == 2)
-			{
+				break;
+			case 2:
 				int2 += toint(file->vol.tablestr[i] & 0xff);
 				if (file->vol.tablestr[i + 1] != *";" && file->vol.tablestr[i + 1] != *"," && file->vol.tablestr[i + 1] != *".")
 				{
 					int2 *= 10;
 				}
+				break;
 			}
 		}
 	}
@@ -590,9 +587,217 @@ static EFI_STATUS EFIAPI file_delete(struct _EFI_FILE_HANDLE* File)
 
 static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 {
-	do_print_error((CHAR16*)L"read_dir", *BufferSize);//
+	auto& info = *(EFI_FILE_INFO*)Buffer;
+	CHAR16* filename = nullptr;
+	EFI_STATUS Status;
 
-	return EFI_UNSUPPORTED;
+	memset(Buffer, 0, *BufferSize);
+
+	Status = bs->AllocatePool(EfiBootServicesData, 256 * sizeof(CHAR16), (void**)&filename);
+
+	if (EFI_ERROR(Status))
+	{
+		do_print_error((CHAR16*)L"AllocatePool 2", Status);
+		return Status;
+	}
+
+	unsigned slashes = 0;
+	unsigned slashcount = 0;
+	unsigned filenamelen = 0;
+	unsigned long long filecount = 0;
+
+	for (unsigned i = 0; i < file.fullnamelen; i++)
+	{
+		if (file.name[i] == *"/" || file.name[i] == *"\\")
+		{
+			slashes++;
+		}
+	}
+
+	for (unsigned long long i = file.vol.tableend; i < file.vol.filenamesend + 2; i++)
+	{
+		switch (file.vol.table[i] & 0xff)
+		{
+		case 255:
+			filename[filenamelen] = 0;
+			if (slashcount - 1 == slashes)
+			{
+				if (filenamelen != file.fullnamelen + 1)
+				{
+					if (filename[0] == 47 || filename[0] == 92)
+					{
+						if (!memcmp(filename, file.name, file.fullnamelen))
+						{
+							filecount++;
+							if (filecount - 1 == file.pos)
+							{
+								i = file.vol.filenamesend + 2;
+								break;
+							}
+						}
+					}
+				}
+			}
+			filenamelen = 0;
+			slashcount = 0;
+			break;
+		case 254:
+			*BufferSize = 0;
+			return EFI_SUCCESS;
+		case 92:
+			filename[filenamelen] = file.vol.table[i];
+			filenamelen++;
+			slashcount++;
+			break;
+		case 47:
+			filename[filenamelen] = 92;
+			filenamelen++;
+			slashcount++;
+			break;
+		default:
+			filename[filenamelen] = file.vol.table[i];
+			filenamelen++;
+			break;
+		}
+	}
+
+	unsigned long long index = getfilenameindex(filename, file.vol);
+	unsigned long long loc = 0;
+	for (unsigned long long i = 0; i < file.vol.tablestrlen; i++)
+	{
+		if (loc == index)
+		{
+			loc = i;
+			break;
+		}
+		if (file.vol.tablestr[i] == *".")
+		{
+			loc++;
+		}
+	}
+
+	bool notzero = false;
+	unsigned cur = 0;
+	unsigned long long int0 = 0;
+	unsigned long long int1 = 0;
+	unsigned long long int2 = 0;
+
+	for (unsigned long long i = loc; i < file.vol.tablestrlen; i++)
+	{
+		if (file.vol.tablestr[i] == *"," || file.vol.tablestr[i] == *".")
+		{
+			if (notzero)
+			{
+				switch (cur)
+				{
+				case 0:
+					info.FileSize += file.vol.sectorsize;
+					break;
+				case 1:
+					break;
+				case 2:
+					info.FileSize += int2 - int1;
+					break;
+				}
+			}
+			cur = 0;
+			int0 = 0;
+			int1 = 0;
+			int2 = 0;
+			if (file.vol.tablestr[i] == *".")
+			{
+				break;
+			}
+		}
+		else if (file.vol.tablestr[i] == *";")
+		{
+			cur++;
+		}
+		else
+		{
+			notzero = true;
+			switch (cur)
+			{
+			case 0:
+				int0 += toint(file.vol.tablestr[i] & 0xff);
+				if (file.vol.tablestr[i + 1] != *";" && file.vol.tablestr[i + 1] != *"," && file.vol.tablestr[i + 1] != *".")
+				{
+					int0 *= 10;
+				}
+				break;
+			case 1:
+				int1 += toint(file.vol.tablestr[i] & 0xff);
+				if (file.vol.tablestr[i + 1] != *";" && file.vol.tablestr[i + 1] != *"," && file.vol.tablestr[i + 1] != *".")
+				{
+					int1 *= 10;
+				}
+				break;
+			case 2:
+				int2 += toint(file.vol.tablestr[i] & 0xff);
+				if (file.vol.tablestr[i + 1] != *";" && file.vol.tablestr[i + 1] != *"," && file.vol.tablestr[i + 1] != *".")
+				{
+					int2 *= 10;
+				}
+				break;
+			}
+		}
+	}
+	
+	unsigned int size = offsetof(EFI_FILE_INFO, FileName[0]) + sizeof(CHAR16);
+
+	size += filenamelen * sizeof(CHAR16);
+
+	if (*BufferSize < size)
+	{
+		*BufferSize = size;
+		return EFI_BUFFER_TOO_SMALL;
+	}
+
+	*BufferSize = size;
+
+	info.Size = size;
+	info.PhysicalSize = (info.FileSize + file.vol.sectorsize + 1) / file.vol.sectorsize * file.vol.sectorsize;
+
+	double time = 0;
+	char tim[8] = { 0 };
+	char ti[8] = { 0 };
+
+	memcpy(tim, file.vol.table + file.vol.filenamesend + 2 + index * 24, 8);
+	for (unsigned i = 0; i < 8; i++)
+	{
+		ti[i] = tim[7 - i];
+	}
+	memcpy(&time, ti, 8);
+	win_time_to_efi(time * 10000000 + 116444736000000000, &info.LastAccessTime);
+
+	memcpy(tim, file.vol.table + file.vol.filenamesend + 2 + index * 24 + 8, 8);
+	for (unsigned i = 0; i < 8; i++)
+	{
+		ti[i] = tim[7 - i];
+	}
+	memcpy(&time, ti, 8);
+	win_time_to_efi(time * 10000000 + 116444736000000000, &info.ModificationTime);
+
+	memcpy(tim, file.vol.table + file.vol.filenamesend + 2 + index * 24 + 16, 8);
+	for (unsigned i = 0; i < 8; i++)
+	{
+		ti[i] = tim[7 - i];
+	}
+	memcpy(&time, ti, 8);
+	win_time_to_efi(time * 10000000 + 116444736000000000, &info.CreateTime);
+
+	unsigned long winattrs = (file.vol.table[file.vol.filenamesend + 2 + file.vol.filecount * 24 + index * 11 + 7] & 0xff) << 24 | (file.vol.table[file.vol.filenamesend + 2 + file.vol.filecount * 24 + index * 11 + 8] & 0xff) << 16 | (file.vol.table[file.vol.filenamesend + 2 + file.vol.filecount * 24 + index * 11 + 9] & 0xff) << 8 | (file.vol.table[file.vol.filenamesend + 2 + file.vol.filecount * 24 + index * 11 + 10] & 0xff);
+	ATTRtoattr(winattrs);
+	info.Attribute = winattrs;
+
+	memcpy(info.FileName, filename + file.fullnamelen + 1, filenamelen * sizeof(CHAR16));
+	info.FileName[filenamelen] = 0;
+
+	bs->FreePool(filename);
+
+	file.pos++;
+
+	return EFI_SUCCESS;
 }
 
 static EFI_STATUS read_file(inode& file, UINTN* BufferSize, VOID* Buffer)
@@ -617,7 +822,7 @@ static EFI_STATUS read_file(inode& file, UINTN* BufferSize, VOID* Buffer)
 
 	if (EFI_ERROR(Status))
 	{
-		do_print_error((CHAR16*)L"AllocatePool 2", Status);
+		do_print_error((CHAR16*)L"AllocatePool 3", Status);
 		return Status;
 	}
 
@@ -696,29 +901,29 @@ static EFI_STATUS read_file(inode& file, UINTN* BufferSize, VOID* Buffer)
 		else
 		{
 			notzero = true;
-			if (cur == 0)
+			switch (cur)
 			{
+			case 0:
 				int0 += toint(file.vol.tablestr[i] & 0xff);
 				if (file.vol.tablestr[i + 1] != *";" && file.vol.tablestr[i + 1] != *"," && file.vol.tablestr[i + 1] != *".")
 				{
 					int0 *= 10;
 				}
-			}
-			else if (cur == 1)
-			{
+				break;
+			case 1:
 				int1 += toint(file.vol.tablestr[i] & 0xff);
 				if (file.vol.tablestr[i + 1] != *";" && file.vol.tablestr[i + 1] != *"," && file.vol.tablestr[i + 1] != *".")
 				{
 					int1 *= 10;
 				}
-			}
-			else if (cur == 2)
-			{
+				break;
+			case 2:
 				int2 += toint(file.vol.tablestr[i] & 0xff);
 				if (file.vol.tablestr[i + 1] != *";" && file.vol.tablestr[i + 1] != *"," && file.vol.tablestr[i + 1] != *".")
 				{
 					int2 *= 10;
 				}
+				break;
 			}
 		}
 	}
@@ -807,7 +1012,7 @@ static EFI_STATUS EFIAPI file_get_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* 
 
 	unsigned int size = offsetof(EFI_FILE_INFO, FileName[0]) + sizeof(CHAR16);
 
-	size += file->namelen * sizeof(CHAR16);
+	size += file->fullnamelen * sizeof(CHAR16);
 
 	if (*BufferSize < size)
 	{
@@ -815,7 +1020,10 @@ static EFI_STATUS EFIAPI file_get_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* 
 		return EFI_BUFFER_TOO_SMALL;
 	}
 
-	info->Size = file->size;
+	memset(Buffer, 0, *BufferSize);
+	*BufferSize = size;
+
+	info->Size = size;
 	info->FileSize = file->size;
 	info->PhysicalSize = (file->size + file->vol.sectorsize + 1) / file->vol.sectorsize * file->vol.sectorsize;
 
@@ -853,7 +1061,8 @@ static EFI_STATUS EFIAPI file_get_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* 
 
 	file->is_dir = winattrs & EFI_FILE_DIRECTORY;
 
-	memcpy(info->FileName, file->name, file->namelen);
+	memcpy(info->FileName, file->name, file->fullnamelen * sizeof(CHAR16));
+	info->FileName[file->fullnamelen] = 0;
 
 	return EFI_SUCCESS;
 }
@@ -902,7 +1111,7 @@ static EFI_STATUS EFIAPI open_volume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* This, EFI_
 
 	if (EFI_ERROR(Status))
 	{
-		do_print_error((CHAR16*)L"AllocatePool 3", Status);
+		do_print_error((CHAR16*)L"AllocatePool 4", Status);
 		return Status;
 	}
 
@@ -1017,7 +1226,7 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 
 	if (EFI_ERROR(Status))
 	{
-		do_print_error((CHAR16*)L"AllocatePool 4", Status);
+		do_print_error((CHAR16*)L"AllocatePool 5", Status);
 		bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
 		bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
 		return Status;
@@ -1094,7 +1303,7 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 
 	if (EFI_ERROR(Status))
 	{
-		do_print_error((CHAR16*)L"AllocatePool 5", Status);
+		do_print_error((CHAR16*)L"AllocatePool 6", Status);
 		bs->FreePool(table);
 		bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
 		bs->CloseProtocol(ControllerHandle, &block_guid, This->DriverBindingHandle, ControllerHandle);
@@ -1121,7 +1330,7 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 
 	if (EFI_ERROR(Status))
 	{
-		do_print_error((CHAR16*)L"AllocatePool 6", Status);
+		do_print_error((CHAR16*)L"AllocatePool 7", Status);
 		bs->FreePool(table);
 		bs->FreePool(tablestr);
 		bs->CloseProtocol(ControllerHandle, &disk_guid, This->DriverBindingHandle, ControllerHandle);
