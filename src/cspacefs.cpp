@@ -26,6 +26,8 @@ struct volume
 	unsigned long long filecount = 0;
 	CHAR16 olddir[256] = { 0 };
 	unsigned olddirlen = 0;
+	unsigned long long readdirindex = 0;
+	unsigned long long readdirloc = 0;
 };
 
 struct inode
@@ -499,14 +501,14 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 	unsigned long long loc = 0;
 	for (unsigned long long i = 0; i < file->vol.tablestrlen; i++)
 	{
-		if (loc == file->index)
-		{
-			loc = i;
-			break;
-		}
 		if (file->vol.tablestr[i] == *".")
 		{
 			loc++;
+			if (loc == file->index)
+			{
+				loc = i + 1;
+				break;
+			}
 		}
 	}
 
@@ -619,7 +621,6 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 	unsigned slashes = 0;
 	unsigned slashcount = 0;
 	unsigned filenamelen = 0;
-	unsigned long long filecount = 0;
 
 	for (unsigned i = 0; i < file.fullnamelen; i++)
 	{
@@ -629,12 +630,20 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 		}
 	}
 
-	for (unsigned long long i = file.vol.tableend; i < file.vol.filenamesend + 2; i++)
+	if (!file.vol.readdirloc)
 	{
-		switch (file.vol.table[i] & 0xff)
+		file.vol.readdirloc = file.vol.tableend;
+	}
+
+	bool end = false;
+
+	for (; (file.vol.readdirloc < file.vol.filenamesend + 2) && !end; file.vol.readdirloc++)
+	{
+		switch (file.vol.table[file.vol.readdirloc] & 0xff)
 		{
 		case 255:
 			filename[filenamelen] = 0;
+			file.vol.readdirindex++;
 			if (slashcount - 1 == slashes)
 			{
 				if (filenamelen != file.fullnamelen + 1)
@@ -643,12 +652,8 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 					{
 						if (!memcmp(filename, file.name, file.fullnamelen))
 						{
-							filecount++;
-							if (filecount - 1 == file.pos)
-							{
-								i = file.vol.filenamesend + 2;
-								break;
-							}
+							end = true;
+							break;
 						}
 					}
 				}
@@ -660,9 +665,11 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 			*BufferSize = 0;
 			memcpy(file.vol.olddir, file.name, file.fullnamelen * sizeof(CHAR16));
 			file.vol.olddirlen = file.fullnamelen;
+			file.vol.readdirindex = 0;
+			file.vol.readdirloc = 0;
 			return EFI_SUCCESS;
 		case 92:
-			filename[filenamelen] = file.vol.table[i];
+			filename[filenamelen] = file.vol.table[file.vol.readdirloc];
 			filenamelen++;
 			slashcount++;
 			break;
@@ -672,24 +679,23 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 			slashcount++;
 			break;
 		default:
-			filename[filenamelen] = file.vol.table[i];
+			filename[filenamelen] = file.vol.table[file.vol.readdirloc];
 			filenamelen++;
 			break;
 		}
 	}
 
-	unsigned long long index = getfilenameindex(filename, file.vol);
 	unsigned long long loc = 0;
 	for (unsigned long long i = 0; i < file.vol.tablestrlen; i++)
 	{
-		if (loc == index)
-		{
-			loc = i;
-			break;
-		}
 		if (file.vol.tablestr[i] == *".")
 		{
 			loc++;
+			if (loc == file.vol.readdirindex)
+			{
+				loc = i + 1;
+				break;
+			}
 		}
 	}
 
@@ -779,7 +785,7 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 	char tim[8] = { 0 };
 	char ti[8] = { 0 };
 
-	memcpy(tim, file.vol.table + file.vol.filenamesend + 2 + index * 24, 8);
+	memcpy(tim, file.vol.table + file.vol.filenamesend + 2 + file.vol.readdirindex * 24, 8);
 	for (unsigned i = 0; i < 8; i++)
 	{
 		ti[i] = tim[7 - i];
@@ -787,7 +793,7 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 	memcpy(&time, ti, 8);
 	win_time_to_efi(time * 10000000 + 116444736000000000, &info.LastAccessTime);
 
-	memcpy(tim, file.vol.table + file.vol.filenamesend + 2 + index * 24 + 8, 8);
+	memcpy(tim, file.vol.table + file.vol.filenamesend + 2 + file.vol.readdirindex * 24 + 8, 8);
 	for (unsigned i = 0; i < 8; i++)
 	{
 		ti[i] = tim[7 - i];
@@ -795,7 +801,7 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 	memcpy(&time, ti, 8);
 	win_time_to_efi(time * 10000000 + 116444736000000000, &info.ModificationTime);
 
-	memcpy(tim, file.vol.table + file.vol.filenamesend + 2 + index * 24 + 16, 8);
+	memcpy(tim, file.vol.table + file.vol.filenamesend + 2 + file.vol.readdirindex * 24 + 16, 8);
 	for (unsigned i = 0; i < 8; i++)
 	{
 		ti[i] = tim[7 - i];
@@ -803,7 +809,7 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 	memcpy(&time, ti, 8);
 	win_time_to_efi(time * 10000000 + 116444736000000000, &info.CreateTime);
 
-	unsigned long winattrs = (file.vol.table[file.vol.filenamesend + 2 + file.vol.filecount * 24 + index * 11 + 7] & 0xff) << 24 | (file.vol.table[file.vol.filenamesend + 2 + file.vol.filecount * 24 + index * 11 + 8] & 0xff) << 16 | (file.vol.table[file.vol.filenamesend + 2 + file.vol.filecount * 24 + index * 11 + 9] & 0xff) << 8 | (file.vol.table[file.vol.filenamesend + 2 + file.vol.filecount * 24 + index * 11 + 10] & 0xff);
+	unsigned long winattrs = (file.vol.table[file.vol.filenamesend + 2 + file.vol.filecount * 24 + file.vol.readdirindex * 11 + 7] & 0xff) << 24 | (file.vol.table[file.vol.filenamesend + 2 + file.vol.filecount * 24 + file.vol.readdirindex * 11 + 8] & 0xff) << 16 | (file.vol.table[file.vol.filenamesend + 2 + file.vol.filecount * 24 + file.vol.readdirindex * 11 + 9] & 0xff) << 8 | (file.vol.table[file.vol.filenamesend + 2 + file.vol.filecount * 24 + file.vol.readdirindex * 11 + 10] & 0xff);
 	ATTRtoattr(winattrs);
 	info.Attribute = winattrs;
 
