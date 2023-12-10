@@ -515,10 +515,12 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 	file->tableloc = loc;
 
 	bool notzero = false;
+	bool multisector = false;
 	unsigned cur = 0;
 	unsigned long long int0 = 0;
 	unsigned long long int1 = 0;
 	unsigned long long int2 = 0;
+	unsigned long long int3 = 0;
 
 	for (unsigned long long i = file->tableloc; i < file->vol.tablestrlen; i++)
 	{
@@ -526,6 +528,13 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 		{
 			if (notzero)
 			{
+				if (multisector)
+				{
+					for (unsigned long long o = 0; o < int0 - int3 - 1; o++)
+					{
+						file->size += file->vol.sectorsize;
+					}
+				}
 				switch (cur)
 				{
 				case 0:
@@ -542,6 +551,8 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 			int0 = 0;
 			int1 = 0;
 			int2 = 0;
+			int3 = 0;
+			multisector = false;
 			if (file->vol.tablestr[i] == *".")
 			{
 				break;
@@ -551,6 +562,15 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 		{
 			cur++;
 		}
+		else if (file->vol.tablestr[i] == *"-")
+		{
+			int3 = int0;
+			multisector = true;
+			cur = 0;
+			int0 = 0;
+			int1 = 0;
+			int2 = 0;
+		}
 		else
 		{
 			notzero = true;
@@ -558,21 +578,21 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 			{
 			case 0:
 				int0 += toint(file->vol.tablestr[i] & 0xff);
-				if (file->vol.tablestr[i + 1] != *";" && file->vol.tablestr[i + 1] != *"," && file->vol.tablestr[i + 1] != *".")
+				if (file->vol.tablestr[i + 1] != *";" && file->vol.tablestr[i + 1] != *"," && file->vol.tablestr[i + 1] != *"." && file->vol.tablestr[i + 1] != *"-")
 				{
 					int0 *= 10;
 				}
 				break;
 			case 1:
 				int1 += toint(file->vol.tablestr[i] & 0xff);
-				if (file->vol.tablestr[i + 1] != *";" && file->vol.tablestr[i + 1] != *"," && file->vol.tablestr[i + 1] != *".")
+				if (file->vol.tablestr[i + 1] != *";" && file->vol.tablestr[i + 1] != *"," && file->vol.tablestr[i + 1] != *"." && file->vol.tablestr[i + 1] != *"-")
 				{
 					int1 *= 10;
 				}
 				break;
 			case 2:
 				int2 += toint(file->vol.tablestr[i] & 0xff);
-				if (file->vol.tablestr[i + 1] != *";" && file->vol.tablestr[i + 1] != *"," && file->vol.tablestr[i + 1] != *".")
+				if (file->vol.tablestr[i + 1] != *";" && file->vol.tablestr[i + 1] != *"," && file->vol.tablestr[i + 1] != *"." && file->vol.tablestr[i + 1] != *"-")
 				{
 					int2 *= 10;
 				}
@@ -700,10 +720,12 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 	}
 
 	bool notzero = false;
+	bool multisector = false;
 	unsigned cur = 0;
 	unsigned long long int0 = 0;
 	unsigned long long int1 = 0;
 	unsigned long long int2 = 0;
+	unsigned long long int3 = 0;
 
 	for (unsigned long long i = loc; i < file.vol.tablestrlen; i++)
 	{
@@ -711,6 +733,13 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 		{
 			if (notzero)
 			{
+				if (multisector)
+				{
+					for (unsigned long long o = 0; o < int0 - int3 - 1; o++)
+					{
+						file.size += file.vol.sectorsize;
+					}
+				}
 				switch (cur)
 				{
 				case 0:
@@ -727,6 +756,8 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 			int0 = 0;
 			int1 = 0;
 			int2 = 0;
+			int3 = 0;
+			multisector = false;
 			if (file.vol.tablestr[i] == *".")
 			{
 				break;
@@ -736,6 +767,15 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 		{
 			cur++;
 		}
+		else if (file.vol.tablestr[i] == *"-")
+		{
+			int3 = int0;
+			multisector = true;
+			cur = 0;
+			int0 = 0;
+			int1 = 0;
+			int2 = 0;
+		}
 		else
 		{
 			notzero = true;
@@ -743,21 +783,21 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 			{
 			case 0:
 				int0 += toint(file.vol.tablestr[i] & 0xff);
-				if (file.vol.tablestr[i + 1] != *";" && file.vol.tablestr[i + 1] != *"," && file.vol.tablestr[i + 1] != *".")
+				if (file.vol.tablestr[i + 1] != *";" && file.vol.tablestr[i + 1] != *"," && file.vol.tablestr[i + 1] != *"." && file.vol.tablestr[i + 1] != *"-")
 				{
 					int0 *= 10;
 				}
 				break;
 			case 1:
 				int1 += toint(file.vol.tablestr[i] & 0xff);
-				if (file.vol.tablestr[i + 1] != *";" && file.vol.tablestr[i + 1] != *"," && file.vol.tablestr[i + 1] != *".")
+				if (file.vol.tablestr[i + 1] != *";" && file.vol.tablestr[i + 1] != *"," && file.vol.tablestr[i + 1] != *"." && file.vol.tablestr[i + 1] != *"-")
 				{
 					int1 *= 10;
 				}
 				break;
 			case 2:
 				int2 += toint(file.vol.tablestr[i] & 0xff);
-				if (file.vol.tablestr[i + 1] != *";" && file.vol.tablestr[i + 1] != *"," && file.vol.tablestr[i + 1] != *".")
+				if (file.vol.tablestr[i + 1] != *";" && file.vol.tablestr[i + 1] != *"," && file.vol.tablestr[i + 1] != *"." && file.vol.tablestr[i + 1] != *"-")
 				{
 					int2 *= 10;
 				}
@@ -851,10 +891,13 @@ static EFI_STATUS read_file(inode& file, UINTN* BufferSize, VOID* Buffer)
 
 	bool init = true;
 	bool notzero = false;
+	bool multisector = false;
 	unsigned cur = 0;
 	unsigned long long int0 = 0;
 	unsigned long long int1 = 0;
 	unsigned long long int2 = 0;
+	unsigned long long int3 = 0;
+	unsigned long long bufferloc = 0;
 
 	for (unsigned long long i = file.tableloc; i < file.vol.tablestrlen; i++)
 	{
@@ -862,6 +905,30 @@ static EFI_STATUS read_file(inode& file, UINTN* BufferSize, VOID* Buffer)
 		{
 			if (notzero)
 			{
+				if (multisector)
+				{
+					for (unsigned long long o = 0; o < int0 - int3 - 1; o++)
+					{
+						file.size += file.vol.sectorsize;
+						if (file.size > file.pos)
+						{
+							file.vol.block->ReadBlocks(file.vol.block, file.vol.block->Media->MediaId, (file.vol.block->Media->LastBlock - file.vol.sectorsize / 512) - (int3 + o) * file.vol.sectorsize / 512 + 1, file.vol.sectorsize, buf);
+							if (init)
+							{
+								memcpy((char*)Buffer, buf + (file.pos % file.vol.sectorsize), min(file.vol.sectorsize - file.pos % file.vol.sectorsize, *BufferSize));
+								file.pos += min(file.vol.sectorsize - file.pos % file.vol.sectorsize, *BufferSize);
+								bufferloc += min(file.vol.sectorsize - file.pos % file.vol.sectorsize, *BufferSize);
+								init = false;
+							}
+							else
+							{
+								memcpy((char*)Buffer + bufferloc, buf, min(file.vol.sectorsize, *BufferSize - bufferloc));
+								file.pos += min(file.vol.sectorsize, *BufferSize - bufferloc);
+								bufferloc += min(file.vol.sectorsize, *BufferSize - bufferloc);
+							}
+						}
+					}
+				}
 				switch (cur)
 				{
 				case 0:
@@ -871,14 +938,16 @@ static EFI_STATUS read_file(inode& file, UINTN* BufferSize, VOID* Buffer)
 						file.vol.block->ReadBlocks(file.vol.block, file.vol.block->Media->MediaId, (file.vol.block->Media->LastBlock - file.vol.sectorsize / 512) - int0 * file.vol.sectorsize / 512 + 1, file.vol.sectorsize, buf);
 						if (init)
 						{
-							memcpy(Buffer, buf + (file.pos % file.vol.sectorsize), min(file.pos % file.vol.sectorsize, *BufferSize));
-							file.pos += min(file.pos % file.vol.sectorsize, *BufferSize);
+							memcpy((char*)Buffer, buf + (file.pos % file.vol.sectorsize), min(file.vol.sectorsize - file.pos % file.vol.sectorsize, *BufferSize));
+							file.pos += min(file.vol.sectorsize - file.pos % file.vol.sectorsize, *BufferSize);
+							bufferloc += min(file.vol.sectorsize - file.pos % file.vol.sectorsize, *BufferSize);
 							init = false;
 						}
 						else
 						{
-							memcpy((char*)Buffer + file.pos, buf, min(file.vol.sectorsize, *BufferSize - file.pos));
-							file.pos += min(file.vol.sectorsize, *BufferSize - file.pos);
+							memcpy((char*)Buffer + bufferloc, buf, min(file.vol.sectorsize, *BufferSize - bufferloc));
+							file.pos += min(file.vol.sectorsize, *BufferSize - bufferloc);
+							bufferloc += min(file.vol.sectorsize, *BufferSize - bufferloc);
 						}
 					}
 					break;
@@ -891,20 +960,22 @@ static EFI_STATUS read_file(inode& file, UINTN* BufferSize, VOID* Buffer)
 						file.vol.block->ReadBlocks(file.vol.block, file.vol.block->Media->MediaId, (file.vol.block->Media->LastBlock - file.vol.sectorsize / 512) - int0 * file.vol.sectorsize / 512 + 1, file.vol.sectorsize, buf);
 						if (init)
 						{
-							memcpy(Buffer, buf + ((int1 + file.pos) % file.vol.sectorsize), min(int2 - int1, *BufferSize));
+							memcpy((char*)Buffer, buf + ((int1 + file.pos) % file.vol.sectorsize), min(int2 - int1, *BufferSize));
 							file.pos += min(int2 - int1, *BufferSize);
+							bufferloc += min(int2 - int1, *BufferSize);
 							init = false;
 						}
 						else
 						{
-							memcpy((char*)Buffer + file.pos, buf + int1, min(int2 - int1, *BufferSize - file.pos));
-							file.pos += min(int2 - int1, *BufferSize - file.pos);
+							memcpy((char*)Buffer + bufferloc, buf + int1, min(int2 - int1, *BufferSize - bufferloc));
+							file.pos += min(int2 - int1, *BufferSize - bufferloc);
+							bufferloc += min(int2 - int1, *BufferSize - bufferloc);
 						}
 					}
 					break;
 				}
 			}
-			if (file.pos == *BufferSize)
+			if (bufferloc == *BufferSize)
 			{
 				return EFI_SUCCESS;
 			}
@@ -912,6 +983,8 @@ static EFI_STATUS read_file(inode& file, UINTN* BufferSize, VOID* Buffer)
 			int0 = 0;
 			int1 = 0;
 			int2 = 0;
+			int3 = 0;
+			multisector = false;
 			if (file.vol.tablestr[i] == *".")
 			{
 				break;
@@ -921,6 +994,15 @@ static EFI_STATUS read_file(inode& file, UINTN* BufferSize, VOID* Buffer)
 		{
 			cur++;
 		}
+		else if (file.vol.tablestr[i] == *"-")
+		{
+			int3 = int0;
+			multisector = true;
+			cur = 0;
+			int0 = 0;
+			int1 = 0;
+			int2 = 0;
+		}
 		else
 		{
 			notzero = true;
@@ -928,21 +1010,21 @@ static EFI_STATUS read_file(inode& file, UINTN* BufferSize, VOID* Buffer)
 			{
 			case 0:
 				int0 += toint(file.vol.tablestr[i] & 0xff);
-				if (file.vol.tablestr[i + 1] != *";" && file.vol.tablestr[i + 1] != *"," && file.vol.tablestr[i + 1] != *".")
+				if (file.vol.tablestr[i + 1] != *";" && file.vol.tablestr[i + 1] != *"," && file.vol.tablestr[i + 1] != *"." && file.vol.tablestr[i + 1] != *"-")
 				{
 					int0 *= 10;
 				}
 				break;
 			case 1:
 				int1 += toint(file.vol.tablestr[i] & 0xff);
-				if (file.vol.tablestr[i + 1] != *";" && file.vol.tablestr[i + 1] != *"," && file.vol.tablestr[i + 1] != *".")
+				if (file.vol.tablestr[i + 1] != *";" && file.vol.tablestr[i + 1] != *"," && file.vol.tablestr[i + 1] != *"." && file.vol.tablestr[i + 1] != *"-")
 				{
 					int1 *= 10;
 				}
 				break;
 			case 2:
 				int2 += toint(file.vol.tablestr[i] & 0xff);
-				if (file.vol.tablestr[i + 1] != *";" && file.vol.tablestr[i + 1] != *"," && file.vol.tablestr[i + 1] != *".")
+				if (file.vol.tablestr[i + 1] != *";" && file.vol.tablestr[i + 1] != *"," && file.vol.tablestr[i + 1] != *"." && file.vol.tablestr[i + 1] != *"-")
 				{
 					int2 *= 10;
 				}
@@ -950,7 +1032,7 @@ static EFI_STATUS read_file(inode& file, UINTN* BufferSize, VOID* Buffer)
 			}
 		}
 	}
-	return EFI_BAD_BUFFER_SIZE;
+	return EFI_SUCCESS;
 }
 
 static EFI_STATUS EFIAPI file_read(struct _EFI_FILE_HANDLE* File, UINTN* BufferSize, VOID* Buffer)
