@@ -916,8 +916,8 @@ static EFI_STATUS read_file(inode& file, UINTN* BufferSize, VOID* Buffer)
 							if (init)
 							{
 								memcpy((char*)Buffer, buf + (file.pos % file.vol.sectorsize), min(file.vol.sectorsize - file.pos % file.vol.sectorsize, *BufferSize));
-								file.pos += min(file.vol.sectorsize - file.pos % file.vol.sectorsize, *BufferSize);
 								bufferloc += min(file.vol.sectorsize - file.pos % file.vol.sectorsize, *BufferSize);
+								file.pos += min(file.vol.sectorsize - file.pos % file.vol.sectorsize, *BufferSize);
 								init = false;
 							}
 							else
@@ -939,8 +939,8 @@ static EFI_STATUS read_file(inode& file, UINTN* BufferSize, VOID* Buffer)
 						if (init)
 						{
 							memcpy((char*)Buffer, buf + (file.pos % file.vol.sectorsize), min(file.vol.sectorsize - file.pos % file.vol.sectorsize, *BufferSize));
-							file.pos += min(file.vol.sectorsize - file.pos % file.vol.sectorsize, *BufferSize);
 							bufferloc += min(file.vol.sectorsize - file.pos % file.vol.sectorsize, *BufferSize);
+							file.pos += min(file.vol.sectorsize - file.pos % file.vol.sectorsize, *BufferSize);
 							init = false;
 						}
 						else
