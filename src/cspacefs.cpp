@@ -530,7 +530,7 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 			{
 				if (multisector)
 				{
-					for (unsigned long long o = 0; o < int0 - int3 - 1; o++)
+					for (unsigned long long o = 0; o < int0 - int3; o++)
 					{
 						file->size += file->vol.sectorsize;
 					}
@@ -735,7 +735,7 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 			{
 				if (multisector)
 				{
-					for (unsigned long long o = 0; o < int0 - int3 - 1; o++)
+					for (unsigned long long o = 0; o < int0 - int3; o++)
 					{
 						file.size += file.vol.sectorsize;
 					}
@@ -907,7 +907,7 @@ static EFI_STATUS read_file(inode& file, UINTN* BufferSize, VOID* Buffer)
 			{
 				if (multisector)
 				{
-					for (unsigned long long o = 0; o < int0 - int3 - 1; o++)
+					for (unsigned long long o = 0; o < int0 - int3; o++)
 					{
 						file.size += file.vol.sectorsize;
 						if (file.size > file.pos)
