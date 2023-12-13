@@ -1485,26 +1485,34 @@ static EFI_STATUS EFIAPI drv_stop(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE 
 	return EFI_INVALID_PARAMETER;
 }
 
-static void get_info_protocol(EFI_HANDLE image_handle) {
+static void get_info_protocol(EFI_HANDLE image_handle)
+{
 	EFI_GUID guid = EFI_QUIBBLE_INFO_PROTOCOL_GUID;
 	EFI_HANDLE* handles = NULL;
 	UINTN count;
 	EFI_STATUS Status;
 
 	Status = bs->LocateHandleBuffer(ByProtocol, &guid, NULL, &count, &handles);
-	if (EFI_ERROR(Status))
-		return;
 
-	if (count == 0) {
+	if (EFI_ERROR(Status))
+	{
+		return;
+	}
+
+	if (count == 0)
+	{
 		bs->FreePool(handles);
 		return;
 	}
 
-	for (unsigned int i = 0; i < count; i++) {
-		Status = bs->OpenProtocol(handles[i], &guid, (void**)&info_proto, image_handle, NULL,
-			EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+	for (unsigned int i = 0; i < count; i++)
+	{
+		Status = bs->OpenProtocol(handles[i], &guid, (void**)&info_proto, image_handle, NULL, EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+
 		if (EFI_ERROR(Status))
+		{
 			continue;
+		}
 
 		break;
 	}
