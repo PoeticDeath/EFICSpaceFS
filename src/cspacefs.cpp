@@ -49,6 +49,7 @@ struct inode
 static EFI_SYSTEM_TABLE* systable;
 static EFI_BOOT_SERVICES* bs;
 static EFI_DRIVER_BINDING_PROTOCOL drvbind;
+static EFI_QUIBBLE_INFO_PROTOCOL* info_proto = nullptr;
 
 static void populate_file_handle(EFI_FILE_PROTOCOL* proto);
 
@@ -1484,6 +1485,33 @@ static EFI_STATUS EFIAPI drv_stop(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE 
 	return EFI_INVALID_PARAMETER;
 }
 
+static void get_info_protocol(EFI_HANDLE image_handle) {
+	EFI_GUID guid = EFI_QUIBBLE_INFO_PROTOCOL_GUID;
+	EFI_HANDLE* handles = NULL;
+	UINTN count;
+	EFI_STATUS Status;
+
+	Status = bs->LocateHandleBuffer(ByProtocol, &guid, NULL, &count, &handles);
+	if (EFI_ERROR(Status))
+		return;
+
+	if (count == 0) {
+		bs->FreePool(handles);
+		return;
+	}
+
+	for (unsigned int i = 0; i < count; i++) {
+		Status = bs->OpenProtocol(handles[i], &guid, (void**)&info_proto, image_handle, NULL,
+			EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+		if (EFI_ERROR(Status))
+			continue;
+
+		break;
+	}
+
+	bs->FreePool(handles);
+}
+
 extern "C"
 EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
 {
@@ -1492,6 +1520,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 
 	systable = SystemTable;
 	bs = SystemTable->BootServices;
+
+	get_info_protocol(ImageHandle);
 
 	drvbind.Supported = drv_supported;
 	drvbind.Start = drv_start;
