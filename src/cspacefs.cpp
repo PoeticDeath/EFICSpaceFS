@@ -500,15 +500,18 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 	}
 
 	unsigned long long loc = 0;
-	for (unsigned long long i = 0; i < file->vol.tablestrlen; i++)
+	if (file->index)
 	{
-		if (file->vol.tablestr[i] == *".")
+		for (unsigned long long i = 0; i < file->vol.tablestrlen; i++)
 		{
-			loc++;
-			if (loc == file->index)
+			if (file->vol.tablestr[i] == *".")
 			{
-				loc = i + 1;
-				break;
+				loc++;
+				if (loc == file->index)
+				{
+					loc = i + 1;
+					break;
+				}
 			}
 		}
 	}
@@ -707,15 +710,18 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 	}
 
 	unsigned long long loc = 0;
-	for (unsigned long long i = 0; i < file.vol.tablestrlen; i++)
+	if (file.vol.readdirindex)
 	{
-		if (file.vol.tablestr[i] == *".")
+		for (unsigned long long i = 0; i < file.vol.tablestrlen; i++)
 		{
-			loc++;
-			if (loc == file.vol.readdirindex)
+			if (file.vol.tablestr[i] == *".")
 			{
-				loc = i + 1;
-				break;
+				loc++;
+				if (loc == file.vol.readdirindex)
+				{
+					loc = i + 1;
+					break;
+				}
 			}
 		}
 	}
@@ -1539,6 +1545,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable
 	drvbind.DriverBindingHandle = ImageHandle;
 
 	Status = bs->InstallProtocolInterface(&drvbind.DriverBindingHandle, &guid, EFI_NATIVE_INTERFACE, &drvbind);
+
 	if (EFI_ERROR(Status))
 	{
 		do_print_error((CHAR16*)L"InstallProtocolInterface", Status);
