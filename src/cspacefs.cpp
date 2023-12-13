@@ -737,7 +737,7 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 				{
 					for (unsigned long long o = 0; o < int0 - int3; o++)
 					{
-						file.size += file.vol.sectorsize;
+						info.FileSize += file.vol.sectorsize;
 					}
 				}
 				switch (cur)
@@ -819,7 +819,7 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 	*BufferSize = size;
 
 	info.Size = size;
-	info.PhysicalSize = (info.FileSize + file.vol.sectorsize + 1) / file.vol.sectorsize * file.vol.sectorsize;
+	info.PhysicalSize = (info.FileSize + file.vol.sectorsize - 1) / file.vol.sectorsize * file.vol.sectorsize;
 
 	double time = 0;
 	char tim[8] = { 0 };
@@ -871,14 +871,7 @@ static EFI_STATUS read_file(inode& file, UINTN* BufferSize, VOID* Buffer)
 		return EFI_SUCCESS;
 	}
 
-	if (*BufferSize > file.size - file.pos)
-	{
-		*BufferSize = file.size - file.pos;
-
-		memset(Buffer, 0, *BufferSize);
-
-		return EFI_SUCCESS;
-	}
+	*BufferSize = min(file.size - file.pos, *BufferSize);
 
 	char* buf = nullptr;
 	EFI_STATUS Status = bs->AllocatePool(EfiBootServicesData, file.vol.sectorsize, (VOID**)&buf);
@@ -898,6 +891,7 @@ static EFI_STATUS read_file(inode& file, UINTN* BufferSize, VOID* Buffer)
 	unsigned long long int2 = 0;
 	unsigned long long int3 = 0;
 	unsigned long long bufferloc = 0;
+	unsigned long long filesize = 0;
 
 	for (unsigned long long i = file.tableloc; i < file.vol.tablestrlen; i++)
 	{
@@ -909,8 +903,8 @@ static EFI_STATUS read_file(inode& file, UINTN* BufferSize, VOID* Buffer)
 				{
 					for (unsigned long long o = 0; o < int0 - int3; o++)
 					{
-						file.size += file.vol.sectorsize;
-						if (file.size > file.pos)
+						filesize += file.vol.sectorsize;
+						if (filesize > file.pos)
 						{
 							file.vol.block->ReadBlocks(file.vol.block, file.vol.block->Media->MediaId, (file.vol.block->Media->LastBlock - file.vol.sectorsize / 512) - (int3 + o) * file.vol.sectorsize / 512 + 1, file.vol.sectorsize, buf);
 							if (init)
@@ -932,8 +926,8 @@ static EFI_STATUS read_file(inode& file, UINTN* BufferSize, VOID* Buffer)
 				switch (cur)
 				{
 				case 0:
-					file.size += file.vol.sectorsize;
-					if (file.size > file.pos)
+					filesize += file.vol.sectorsize;
+					if (filesize > file.pos)
 					{
 						file.vol.block->ReadBlocks(file.vol.block, file.vol.block->Media->MediaId, (file.vol.block->Media->LastBlock - file.vol.sectorsize / 512) - int0 * file.vol.sectorsize / 512 + 1, file.vol.sectorsize, buf);
 						if (init)
@@ -954,8 +948,8 @@ static EFI_STATUS read_file(inode& file, UINTN* BufferSize, VOID* Buffer)
 				case 1:
 					break;
 				case 2:
-					file.size += int2 - int1;
-					if (file.size > file.pos)
+					filesize += int2 - int1;
+					if (filesize > file.pos)
 					{
 						file.vol.block->ReadBlocks(file.vol.block, file.vol.block->Media->MediaId, (file.vol.block->Media->LastBlock - file.vol.sectorsize / 512) - int0 * file.vol.sectorsize / 512 + 1, file.vol.sectorsize, buf);
 						if (init)
@@ -1130,7 +1124,7 @@ static EFI_STATUS EFIAPI file_get_info(struct _EFI_FILE_HANDLE* File, EFI_GUID* 
 
 	info->Size = size;
 	info->FileSize = file->size;
-	info->PhysicalSize = (file->size + file->vol.sectorsize + 1) / file->vol.sectorsize * file->vol.sectorsize;
+	info->PhysicalSize = (file->size + file->vol.sectorsize - 1) / file->vol.sectorsize * file->vol.sectorsize;
 
 	double time = 0;
 	char tim[8] = { 0 };
