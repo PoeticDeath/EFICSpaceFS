@@ -202,7 +202,8 @@ static void ATTRtoattr(unsigned long& ATTR)
 }
 
 extern "C"
-void* memset(void* s, int c, size_t n) {
+void* memset(void* s, int c, size_t n)
+{
 	void* orig_s = s;
 
 	// FIXME - faster if we make sure we're aligned (also in memcpy)?
@@ -212,12 +213,14 @@ void* memset(void* s, int c, size_t n) {
 
 	v = 0;
 
-	for (unsigned int i = 0; i < sizeof(uint64_t); i++) {
+	for (unsigned int i = 0; i < sizeof(uint64_t); i++)
+	{
 		v <<= 8;
 		v |= c & 0xff;
 	}
 
-	while (n >= sizeof(uint64_t)) {
+	while (n >= sizeof(uint64_t))
+	{
 		*(uint64_t*)s = v;
 
 		s = (uint8_t*)s + sizeof(uint64_t);
@@ -228,12 +231,14 @@ void* memset(void* s, int c, size_t n) {
 
 	v = 0;
 
-	for (unsigned int i = 0; i < sizeof(uint32_t); i++) {
+	for (unsigned int i = 0; i < sizeof(uint32_t); i++)
+	{
 		v <<= 8;
 		v |= c & 0xff;
 	}
 
-	while (n >= sizeof(uint32_t)) {
+	while (n >= sizeof(uint32_t))
+	{
 		*(uint32_t*)s = v;
 
 		s = (uint8_t*)s + sizeof(uint32_t);
@@ -241,7 +246,8 @@ void* memset(void* s, int c, size_t n) {
 	}
 #endif
 
-	while (n > 0) {
+	while (n > 0)
+	{
 		*(uint8_t*)s = c;
 
 		s = (uint8_t*)s + 1;
@@ -252,14 +258,18 @@ void* memset(void* s, int c, size_t n) {
 }
 
 extern "C"
-int memcmp(const void* s1, const void* s2, size_t n) {
+int memcmp(const void* s1, const void* s2, size_t n)
+{
 #if __INTPTR_WIDTH__ == 64
-	while (n > sizeof(uint64_t)) {
+	while (n > sizeof(uint64_t))
+	{
 		uint64_t c1 = *(uint64_t*)s1;
 		uint64_t c2 = *(uint64_t*)s2;
 
 		if (c1 != c2)
+		{
 			return c1 > c2 ? 1 : -1;
+		}
 
 		s1 = (uint64_t*)s1 + 1;
 		s2 = (uint64_t*)s2 + 1;
@@ -267,24 +277,30 @@ int memcmp(const void* s1, const void* s2, size_t n) {
 	}
 #endif
 
-	while (n > sizeof(uint32_t)) {
+	while (n > sizeof(uint32_t))
+	{
 		uint32_t c1 = *(uint32_t*)s1;
 		uint32_t c2 = *(uint32_t*)s2;
 
 		if (c1 != c2)
+		{
 			return c1 > c2 ? 1 : -1;
+		}
 
 		s1 = (uint32_t*)s1 + 1;
 		s2 = (uint32_t*)s2 + 1;
 		n -= sizeof(uint32_t);
 	}
 
-	while (n > 0) {
+	while (n > 0)
+	{
 		uint8_t c1 = *(uint8_t*)s1;
 		uint8_t c2 = *(uint8_t*)s2;
 
 		if (c1 != c2)
+		{
 			return c1 > c2 ? 1 : -1;
+		}
 
 		s1 = (uint8_t*)s1 + 1;
 		s2 = (uint8_t*)s2 + 1;
@@ -295,11 +311,13 @@ int memcmp(const void* s1, const void* s2, size_t n) {
 }
 
 extern "C"
-void* memcpy(void* dest, const void* src, size_t n) {
+void* memcpy(void* dest, const void* src, size_t n)
+{
 	void* orig_dest = dest;
 
 #if __INTPTR_WIDTH__ == 64
-	while (n >= sizeof(uint64_t)) {
+	while (n >= sizeof(uint64_t))
+	{
 		*(uint64_t*)dest = *(uint64_t*)src;
 
 		dest = (uint8_t*)dest + sizeof(uint64_t);
@@ -309,7 +327,8 @@ void* memcpy(void* dest, const void* src, size_t n) {
 	}
 #endif
 
-	while (n >= sizeof(uint32_t)) {
+	while (n >= sizeof(uint32_t))
+	{
 		*(uint32_t*)dest = *(uint32_t*)src;
 
 		dest = (uint8_t*)dest + sizeof(uint32_t);
@@ -318,7 +337,8 @@ void* memcpy(void* dest, const void* src, size_t n) {
 		n -= sizeof(uint32_t);
 	}
 
-	while (n >= sizeof(uint16_t)) {
+	while (n >= sizeof(uint16_t))
+	{
 		*(uint16_t*)dest = *(uint16_t*)src;
 
 		dest = (uint8_t*)dest + sizeof(uint16_t);
@@ -327,7 +347,8 @@ void* memcpy(void* dest, const void* src, size_t n) {
 		n -= sizeof(uint16_t);
 	}
 
-	while (n >= sizeof(uint8_t)) {
+	while (n >= sizeof(uint8_t))
+	{
 		*(uint8_t*)dest = *(uint8_t*)src;
 
 		dest = (uint8_t*)dest + sizeof(uint8_t);
