@@ -5,6 +5,8 @@ project(cspacefs-uefi)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+add_compile_options("-O3")
+
 if(MSVC)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /ENTRY:efi_main")
     add_compile_options("/GS-")
