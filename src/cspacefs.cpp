@@ -472,7 +472,7 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 		return EFI_INVALID_PARAMETER;
 	}
 
-	Status = bs->AllocatePool(EfiBootServicesData, (FileNameLen + 2) * 2, (void**)&filename);
+	Status = bs->AllocatePool(EfiBootServicesData, (FileNameLen + 2) * sizeof(CHAR16), (void**)&filename);
 
 	if (EFI_ERROR(Status))
 	{
@@ -480,7 +480,7 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 		return Status;
 	}
 
-	new (filename) CHAR16[(FileNameLen + 2) * 2];
+	new (filename) CHAR16[(FileNameLen + 2) * sizeof(CHAR16)];
 
 	memcpy(filename, ino->vol.olddir, ino->vol.olddirlen * sizeof(CHAR16));
 
@@ -531,7 +531,6 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 		}
 
 		memcpy(file->name, ino->vol.olddir, tempdirlen * sizeof(CHAR16));
-		file->fullnamelen += tempdirlen;
 
 		for (unsigned i = 0; i < file->fullnamelen; i++)
 		{
@@ -542,6 +541,7 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 			file->name[i + tempdirlen + !(FileName[0] == *"/" || FileName[0] == *"\\")] = FileName[i];
 		}
 
+		file->fullnamelen += tempdirlen;
 		file->name[file->fullnamelen + !(FileName[0] == *"/" || FileName[0] == *"\\")] = 0;
 		file->index = getfilenameindex(file->name, ino->vol);
 	}
