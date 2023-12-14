@@ -472,7 +472,7 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 		return EFI_INVALID_PARAMETER;
 	}
 
-	Status = bs->AllocatePool(EfiBootServicesData, (FileNameLen + 1) * 2, (void**)&filename);
+	Status = bs->AllocatePool(EfiBootServicesData, (FileNameLen + 2) * 2, (void**)&filename);
 
 	if (EFI_ERROR(Status))
 	{
@@ -480,16 +480,20 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 		return Status;
 	}
 
-	new (filename) CHAR16[(FileNameLen + 1) * 2];
+	new (filename) CHAR16[(FileNameLen + 2) * 2];
 
 	memcpy(filename, ino->vol.olddir, ino->vol.olddirlen * sizeof(CHAR16));
 
 	for (unsigned i = 0; i < FileNameLen; i++)
 	{
-		filename[i + ino->vol.olddirlen] = FileName[i];
+		if (!i && !(FileName[0] == *"/" || FileName[0] == *"\\"))
+		{
+			filename[ino->vol.olddirlen] = *"\\";
+		}
+		filename[i + ino->vol.olddirlen + !(FileName[0] == *"/" || FileName[0] == *"\\")] = FileName[i];
 	}
 
-	filename[FileNameLen] = 0;
+	filename[FileNameLen + !(FileName[0] == *"/" || FileName[0] == *"\\")] = 0;
 
 	Status = bs->AllocatePool(EfiBootServicesData, sizeof(inode), (void**)&file);
 
@@ -507,25 +511,57 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 	populate_file_handle(&file->proto);
 
 	file->name = filename;
-	file->fullnamelen = FileNameLen;
-	file->index = getfilenameindex(filename, file->vol);
+	file->fullnamelen = FileNameLen + !(FileName[0] == *"/" || FileName[0] == *"\\");
+	file->index = getfilenameindex(filename, ino->vol);
 	file->size = 0;
 	file->pos = 0;
 
-	if (!file->index)
+	UINTN tempdirlen = ino->vol.olddirlen;
+
+	while (!file->index && tempdirlen)
 	{
-		file->fullnamelen = FileNameLen - ino->vol.olddirlen;
-		memcpy(filename, FileName, (file->fullnamelen) * sizeof(CHAR16));
-		filename[file->fullnamelen] = 0;
-		file->index = getfilenameindex(filename, file->vol);
+		file->fullnamelen -= tempdirlen;
+		tempdirlen--;
+		for (; ino->vol.olddir[tempdirlen] != *"\\"; tempdirlen--)
+		{
+			if (!tempdirlen)
+			{
+				break;
+			}
+		}
+
+		memcpy(file->name, ino->vol.olddir, tempdirlen * sizeof(CHAR16));
+		file->fullnamelen += tempdirlen;
+
+		for (unsigned i = 0; i < file->fullnamelen; i++)
+		{
+			if (!i && !(FileName[0] == *"/" || FileName[0] == *"\\"))
+			{
+				file->name[tempdirlen] = *"\\";
+			}
+			file->name[i + tempdirlen + !(FileName[0] == *"/" || FileName[0] == *"\\")] = FileName[i];
+		}
+
+		file->name[file->fullnamelen + !(FileName[0] == *"/" || FileName[0] == *"\\")] = 0;
+		file->index = getfilenameindex(file->name, ino->vol);
+	}
+
+	unsigned long winattrs = (ino->vol.table[ino->vol.filenamesend + 2 + ino->vol.filecount * 24 + file->index * 11 + 7] & 0xff) << 24 | (ino->vol.table[ino->vol.filenamesend + 2 + ino->vol.filecount * 24 + file->index * 11 + 8] & 0xff) << 16 | (ino->vol.table[ino->vol.filenamesend + 2 + ino->vol.filecount * 24 + file->index * 11 + 9] & 0xff) << 8 | (ino->vol.table[ino->vol.filenamesend + 2 + ino->vol.filecount * 24 + file->index * 11 + 10] & 0xff);
+	ATTRtoattr(winattrs);
+
+	if (winattrs & EFI_FILE_DIRECTORY && !ino->vol.readdirloc && !((FileName[0] == *"/" || FileName[0] == *"\\") && FileName[1] == 0) && (ino->vol.olddirlen < file->fullnamelen || !tempdirlen))
+	{
+		memcpy(ino->vol.olddir, file->name, file->fullnamelen * sizeof(CHAR16));
+		ino->vol.olddir[file->fullnamelen] = 0;
+		ino->vol.olddirlen = file->fullnamelen;
 	}
 
 	unsigned long long loc = 0;
 	if (file->index)
 	{
-		for (unsigned long long i = 0; i < file->vol.tablestrlen; i++)
+		for (unsigned long long i = 0; i < ino->vol.tablestrlen; i++)
 		{
-			if (file->vol.tablestr[i] == *".")
+			if (ino->vol.tablestr[i] == *".")
 			{
 				loc++;
 				if (loc == file->index)
@@ -547,9 +583,9 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 	unsigned long long int2 = 0;
 	unsigned long long int3 = 0;
 
-	for (unsigned long long i = file->tableloc; i < file->vol.tablestrlen; i++)
+	for (unsigned long long i = file->tableloc; i < ino->vol.tablestrlen; i++)
 	{
-		if (file->vol.tablestr[i] == *"," || file->vol.tablestr[i] == *".")
+		if (ino->vol.tablestr[i] == *"," || ino->vol.tablestr[i] == *".")
 		{
 			if (notzero)
 			{
@@ -557,13 +593,13 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 				{
 					for (unsigned long long o = 0; o < int0 - int3; o++)
 					{
-						file->size += file->vol.sectorsize;
+						file->size += ino->vol.sectorsize;
 					}
 				}
 				switch (cur)
 				{
 				case 0:
-					file->size += file->vol.sectorsize;
+					file->size += ino->vol.sectorsize;
 					break;
 				case 1:
 					break;
@@ -578,16 +614,16 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 			int2 = 0;
 			int3 = 0;
 			multisector = false;
-			if (file->vol.tablestr[i] == *".")
+			if (ino->vol.tablestr[i] == *".")
 			{
 				break;
 			}
 		}
-		else if (file->vol.tablestr[i] == *";")
+		else if (ino->vol.tablestr[i] == *";")
 		{
 			cur++;
 		}
-		else if (file->vol.tablestr[i] == *"-")
+		else if (ino->vol.tablestr[i] == *"-")
 		{
 			int3 = int0;
 			multisector = true;
@@ -602,22 +638,22 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 			switch (cur)
 			{
 			case 0:
-				int0 += toint(file->vol.tablestr[i] & 0xff);
-				if (file->vol.tablestr[i + 1] != *";" && file->vol.tablestr[i + 1] != *"," && file->vol.tablestr[i + 1] != *"." && file->vol.tablestr[i + 1] != *"-")
+				int0 += toint(ino->vol.tablestr[i] & 0xff);
+				if (ino->vol.tablestr[i + 1] != *";" && ino->vol.tablestr[i + 1] != *"," && ino->vol.tablestr[i + 1] != *"." && ino->vol.tablestr[i + 1] != *"-")
 				{
 					int0 *= 10;
 				}
 				break;
 			case 1:
-				int1 += toint(file->vol.tablestr[i] & 0xff);
-				if (file->vol.tablestr[i + 1] != *";" && file->vol.tablestr[i + 1] != *"," && file->vol.tablestr[i + 1] != *"." && file->vol.tablestr[i + 1] != *"-")
+				int1 += toint(ino->vol.tablestr[i] & 0xff);
+				if (ino->vol.tablestr[i + 1] != *";" && ino->vol.tablestr[i + 1] != *"," && ino->vol.tablestr[i + 1] != *"." && ino->vol.tablestr[i + 1] != *"-")
 				{
 					int1 *= 10;
 				}
 				break;
 			case 2:
-				int2 += toint(file->vol.tablestr[i] & 0xff);
-				if (file->vol.tablestr[i + 1] != *";" && file->vol.tablestr[i + 1] != *"," && file->vol.tablestr[i + 1] != *"." && file->vol.tablestr[i + 1] != *"-")
+				int2 += toint(ino->vol.tablestr[i] & 0xff);
+				if (ino->vol.tablestr[i + 1] != *";" && ino->vol.tablestr[i + 1] != *"," && ino->vol.tablestr[i + 1] != *"." && ino->vol.tablestr[i + 1] != *"-")
 				{
 					int2 *= 10;
 				}
@@ -708,8 +744,6 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 			break;
 		case 254:
 			*BufferSize = 0;
-			memcpy(file.vol.olddir, file.name, file.fullnamelen * sizeof(CHAR16));
-			file.vol.olddirlen = file.fullnamelen;
 			file.vol.readdirindex = 0;
 			file.vol.readdirloc = 0;
 			return EFI_SUCCESS;
