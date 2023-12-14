@@ -484,7 +484,7 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 
 	memcpy(filename, ino->vol.olddir, ino->vol.olddirlen * sizeof(CHAR16));
 
-	for (unsigned i = 0; i < FileNameLen; i++)
+	for (unsigned i = 0; i < FileNameLen - ino->vol.olddirlen; i++)
 	{
 		if (!i && !(FileName[0] == *"/" || FileName[0] == *"\\"))
 		{
