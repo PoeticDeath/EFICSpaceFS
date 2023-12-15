@@ -549,7 +549,17 @@ static EFI_STATUS EFIAPI file_open(struct _EFI_FILE_HANDLE* File, struct _EFI_FI
 	unsigned long winattrs = (ino->vol.table[ino->vol.filenamesend + 2 + ino->vol.filecount * 24 + file->index * 11 + 7] & 0xff) << 24 | (ino->vol.table[ino->vol.filenamesend + 2 + ino->vol.filecount * 24 + file->index * 11 + 8] & 0xff) << 16 | (ino->vol.table[ino->vol.filenamesend + 2 + ino->vol.filecount * 24 + file->index * 11 + 9] & 0xff) << 8 | (ino->vol.table[ino->vol.filenamesend + 2 + ino->vol.filecount * 24 + file->index * 11 + 10] & 0xff);
 	ATTRtoattr(winattrs);
 
-	if (winattrs & EFI_FILE_DIRECTORY && !ino->vol.readdirloc && !((FileName[0] == *"/" || FileName[0] == *"\\") && FileName[1] == 0) && (ino->vol.olddirlen < file->fullnamelen || !tempdirlen))
+	bool diff = false;
+	for (UINTN i = 0; i < file->fullnamelen; i++)
+	{
+		if (!incmp(file->name[i], ino->vol.olddir[i]))
+		{
+			diff = true;
+			break;
+		}
+	}
+
+	if (winattrs & EFI_FILE_DIRECTORY && !ino->vol.readdirloc && !((FileName[0] == *"/" || FileName[0] == *"\\") && FileName[1] == 0) && (diff || ino->vol.olddirlen < file->fullnamelen || !tempdirlen))
 	{
 		memcpy(ino->vol.olddir, file->name, file->fullnamelen * sizeof(CHAR16));
 		ino->vol.olddir[file->fullnamelen] = 0;
