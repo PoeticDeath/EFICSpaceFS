@@ -731,9 +731,24 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 				{
 					if (filename[0] == 47 || filename[0] == 92)
 					{
-						if (!memcmp(filename, file.name, file.fullnamelen))
+						for (UINTN i = 0; i < file.fullnamelen; i++)
+						{
+							if (incmp(filename[i], file.name[i]))
+							{
+								end = true;
+							}
+							else
+							{
+								end = false;
+								break;
+							}
+						}
+						if (!file.fullnamelen)
 						{
 							end = true;
+						}
+						if (end)
+						{
 							break;
 						}
 					}
