@@ -24,7 +24,7 @@ struct volume
 	char* tablestr = nullptr;
 	unsigned long long tablestrlen = 0;
 	unsigned long long filecount = 0;
-	CHAR16 olddir[256] = { 0 };
+	CHAR16 olddir[65536] = { 0 };
 	unsigned olddirlen = 0;
 	unsigned long long readdirindex = 0;
 	unsigned long long readdirloc = 0;
@@ -701,7 +701,7 @@ static EFI_STATUS read_dir(inode& file, UINTN* BufferSize, VOID* Buffer)
 
 	memset(Buffer, 0, *BufferSize);
 
-	Status = bs->AllocatePool(EfiBootServicesData, 256 * sizeof(CHAR16), (void**)&filename);
+	Status = bs->AllocatePool(EfiBootServicesData, 65536 * sizeof(CHAR16), (void**)&filename);
 
 	if (EFI_ERROR(Status))
 	{
@@ -1430,6 +1430,7 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 
 	bool found = false;
 	unsigned long long loc = 0;
+	unsigned long long lastslash = 0;
 
 	for (filenamesend = 5; filenamesend < extratablesize; filenamesend++)
 	{
@@ -1453,8 +1454,13 @@ static EFI_STATUS EFIAPI drv_start(EFI_DRIVER_BINDING_PROTOCOL* This, EFI_HANDLE
 
 				loc = filenamesend;
 			}
+			lastslash = 0;
 		}
-		if (filenamesend - loc > 256 && loc > 0)
+		if (table[filenamesend] == 47 || table[filenamesend] == 92)
+		{
+			lastslash = filenamesend - loc;
+		}
+		if (filenamesend - loc - lastslash > 256 && loc > 0)
 		{
 			break;
 		}
