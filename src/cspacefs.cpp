@@ -2,6 +2,67 @@
 #include <efi.h>
 #include "quibbleproto.h"
 
+#define EFI_PARTITION_INFO_PROTOCOL_GUID {0x8cf2f62c, 0xbc9b, 0x4821, {0x80, 0x8d, 0xec, 0x9e, 0xc4, 0x21, 0xa1, 0xa0}}
+
+#define EFI_PARTITION_INFO_PROTOCOL_REVISION 0x0001000
+#define PARTITION_TYPE_OTHER 0x00
+#define PARTITION_TYPE_MBR 0x01
+#define PARTITION_TYPE_GPT 0x02
+
+#pragma pack(1)
+
+///
+/// MBR Partition Entry
+///
+typedef struct
+{
+	UINT8 BootIndicator;
+	UINT8 StartHead;
+	UINT8 StartSector;
+	UINT8 StartTrack;
+	UINT8 OSIndicator;
+	UINT8 EndHead;
+	UINT8 EndSector;
+	UINT8 EndTrack;
+	UINT8 StartingLBA[4];
+	UINT8 SizeInLBA[4];
+} MBR_PARTITION_RECORD;
+
+///
+/// GPT Partition Entry.
+///
+typedef struct
+{
+	EFI_GUID PartitionTypeGUID;
+	EFI_GUID UniquePartitionGUID;
+	EFI_LBA  StartingLBA;
+	EFI_LBA  EndingLBA;
+	UINT64   Attributes;
+	CHAR16   PartitionName[36];
+} EFI_PARTITION_ENTRY;
+
+typedef struct
+{
+	UINT32 Revision;
+	UINT32 Type;
+	UINT8  System;
+	UINT8  Reserved[7];
+	union
+	{
+		///
+		/// MBR data
+		///
+		MBR_PARTITION_RECORD Mbr;
+
+		///
+		/// GPT data
+		///
+		EFI_PARTITION_ENTRY Gpt;
+	} Info;
+} EFI_PARTITION_INFO_PROTOCOL;
+
+#pragma pack()
+
 #define UNUSED(x) (void)(x)
 #define min(a, b) ((a) < (b) ? (a) : (b))
 #define max(a, b) ((a) < (b) ? (b) : (a))
@@ -1314,13 +1375,177 @@ static EFI_STATUS EFIAPI open_volume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL* This, EFI_
 	return EFI_SUCCESS;
 }
 
-static EFI_STATUS EFIAPI get_arc_name(EFI_QUIBBLE_PROTOCOL* This, char* ArcName, UINTN* ArcnameLen)
+static EFI_STATUS EFIAPI get_arc_name(EFI_QUIBBLE_PROTOCOL* This, char* ArcName, UINTN* ArcNameLen)
 {
-	UNUSED(This);
-	UNUSED(ArcName);
-	UNUSED(ArcnameLen);
+	volume* vol = _CR(This, volume, proto);
+	char* guid;
+	char* s;
 
-	return EFI_UNSUPPORTED;
+	static const char prefix[] = "CSpaceFS(";
+	static const unsigned int needed_len = sizeof(prefix) - 1 + 37;
+
+	if (*ArcNameLen < needed_len)
+	{
+		*ArcNameLen = needed_len;
+		return EFI_BUFFER_TOO_SMALL;
+	}
+
+	EFI_STATUS Status;
+	UINTN handle_count = 0;
+	EFI_HANDLE* handles = nullptr;
+	EFI_BLOCK_IO* block = nullptr;
+	EFI_GUID block_guid = EFI_BLOCK_IO_PROTOCOL_GUID;
+
+	Status = bs->LocateHandle(ByProtocol, &block_guid, NULL, &handle_count, handles);
+
+	if (!handle_count)
+	{
+		do_print_error((CHAR16*)L"No handles found", Status);
+		return EFI_NOT_FOUND;
+	}
+
+	if (Status != EFI_BUFFER_TOO_SMALL)
+	{
+		do_print_error((CHAR16*)L"LocateHandle - pre", Status);
+		return Status;
+	}
+
+	Status = bs->AllocatePool(EfiBootServicesData, handle_count * sizeof(EFI_HANDLE), (void**)&handles);
+
+	if (EFI_ERROR(Status))
+	{
+		do_print_error((CHAR16*)L"AllocatePool 5", Status);
+		return Status;
+	}
+
+	Status = bs->LocateHandle(ByProtocol, &block_guid, NULL, &handle_count, handles);
+
+	if (EFI_ERROR(Status))
+	{
+		do_print_error((CHAR16*)L"LocateHandle - post", Status);
+		bs->FreePool(handles);
+		return Status;
+	}
+
+	char* table = nullptr;
+	Status = bs->AllocatePool(EfiBootServicesData, 512, (void**)&table);
+
+	if (EFI_ERROR(Status))
+	{
+		do_print_error((CHAR16*)L"AllocatePool 6", Status);
+		bs->FreePool(handles);
+		return Status;
+	}
+
+	unsigned long long disk = 0;
+	bool found = false;
+	for (; disk < handle_count; disk++)
+	{
+		do_print_error((CHAR16*)L"Handle", disk);
+		Status = bs->HandleProtocol(handles[disk], &block_guid, (void**)&block);
+		if (EFI_ERROR(Status) || !block || !block->Media->BlockSize)
+		{
+			do_print_error((CHAR16*)L"Failed handle", Status);
+			continue;
+		}
+		Status = block->ReadBlocks(block, block->Media->MediaId, 0, 512, table);
+		if (EFI_ERROR(Status))
+		{
+			do_print_error((CHAR16*)L"ReadBlocks", Status);
+			continue;
+		}
+		if (!memcmp(table, vol->table, 512))
+		{
+			found = true;
+			break;
+		}
+	}
+
+	bs->FreePool(table);
+
+	if (!found)
+	{
+		do_print_error((CHAR16*)L"No handles matched", handle_count);
+		bs->FreePool(handles);
+		return EFI_NOT_FOUND;
+	}
+
+	EFI_PARTITION_INFO_PROTOCOL* part_info = nullptr;
+	EFI_GUID GUID = EFI_PARTITION_INFO_PROTOCOL_GUID;
+	bs->HandleProtocol(handles[disk + 2], &GUID, (void**)&part_info); // Should be no need for + 2, but it works...
+	bs->FreePool(handles);
+
+	*ArcNameLen = needed_len;
+	memcpy(ArcName, prefix, sizeof(prefix) - 1);
+	s = &ArcName[sizeof(prefix) - 1];
+	guid = (char*)&part_info->Info.Gpt.UniquePartitionGUID;
+
+	for (unsigned int i = 0; i < 16; i++)
+	{
+		int o;
+		switch (i) // uuid is mixed endian
+		{
+		case 0:
+			o = 3;
+			break;
+		case 1:
+			o = 2;
+			break;
+		case 2:
+			o = 1;
+			break;
+		case 3:
+			o = 0;
+			break;
+		case 4:
+			o = 5;
+			break;
+		case 5:
+			o = 4;
+			break;
+		case 6:
+			o = 7;
+			break;
+		case 7:
+			o = 6;
+			break;
+		default:
+			o = i;
+			break;
+		}
+
+		if (((guid[o] >> 4) & 0xf) < 0xa)
+		{
+			*s = ((guid[o] >> 4) & 0xf) + '0';
+		}
+		else
+		{
+			*s = ((guid[o] >> 4) & 0xf) + 'a' - 0xa;
+		}
+
+		s++;
+
+		if ((guid[o] & 0xf) < 0xa)
+		{
+			*s = (guid[o] & 0xf) + '0';
+		}
+		else
+		{
+			*s = (guid[o] & 0xf) + 'a' - 0xa;
+		}
+
+		s++;
+
+		if (i == 3 || i == 5 || i == 7 || i == 9)
+		{
+			*s = '-';
+			s++;
+		}
+	}
+
+	*s = ')';
+
+	return EFI_SUCCESS;
 }
 
 static EFI_STATUS get_driver_name(EFI_QUIBBLE_PROTOCOL* This, CHAR16* DriverName, UINTN* DriverNameLen)
